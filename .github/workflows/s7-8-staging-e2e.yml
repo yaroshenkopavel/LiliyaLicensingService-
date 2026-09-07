@@ -87,7 +87,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .s78-ob/config .s78-ob/tls
-          chmod 700 .s78-ob .s78-ob/tls
+          chmod 700 .s78-ob
+          chmod 755 .s78-ob/tls
 
           docker volume create liliya-s78-openbao-data >/dev/null
           docker volume create liliya-s78-openbao-audit >/dev/null
@@ -149,6 +150,7 @@ jobs:
             -out .s78-ob/tls/server.crt \
             -extfile .s78-ob/tls/server-ext.cnf >/dev/null 2>&1
 
+          chmod 600 .s78-ob/tls/ca.key
           chmod 644 .s78-ob/tls/ca.crt .s78-ob/tls/server.crt .s78-ob/tls/server.key
 
           OB_TRUST_PASS="$(openssl rand -hex 24)"
