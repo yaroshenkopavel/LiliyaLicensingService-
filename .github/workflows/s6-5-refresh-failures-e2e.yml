@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: yaroshenkopavel/LiliyaCore-
-          ref: 284f3f11657417ed896b1087a3ce2bf9ad92757b
+          ref: ca3195f25db556e463b7ee553e4203eeb802f5af
           path: liliya-core
 
       - uses: actions/setup-java@v4
