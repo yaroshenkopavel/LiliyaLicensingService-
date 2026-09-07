@@ -43,6 +43,7 @@ class ProductionHttpsListenerContractTest {
             handler = LicenseHttpsHandler {
                 LicenseHttpResponse(503, null, byteArrayOf())
             },
+            readiness = { true },
             sslContextProvider = { throw IllegalStateException("TLS unavailable") }
         )
 
@@ -66,6 +67,7 @@ class ProductionHttpsListenerContractTest {
             handler = LicenseHttpsHandler {
                 LicenseHttpResponse(503, null, byteArrayOf())
             },
+            readiness = { true },
             sslContextProvider = { SSLContext.getDefault() }
         )
 
@@ -78,4 +80,31 @@ class ProductionHttpsListenerContractTest {
             }
         }
     }
+    @Test
+    fun readiness_endpoint_is_not_owned_by_listener() {
+        val config = ProductionHttpsConfig(
+            host = "127.0.0.1",
+            port = 18446,
+            keyStorePath = Path.of("/unused.p12"),
+            keyStorePassword = TlsPassword.of("secret".toCharArray())
+        )
+        val listener = ProductionHttpsListener(
+            config = config,
+            handler = LicenseHttpsHandler {
+                LicenseHttpResponse(503, null, byteArrayOf())
+            },
+            readiness = { false },
+            sslContextProvider = { SSLContext.getDefault() }
+        )
+
+        config.use {
+            assertEquals(LicensingRuntimeListenerResult.Started, listener.start())
+            try {
+                assertTrue(listener.toString().contains("readiness=<redacted>"))
+            } finally {
+                listener.close()
+            }
+        }
+    }
+
 }

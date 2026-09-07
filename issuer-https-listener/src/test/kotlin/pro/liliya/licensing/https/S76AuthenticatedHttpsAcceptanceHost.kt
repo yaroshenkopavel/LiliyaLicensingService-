@@ -113,7 +113,7 @@ fun main() {
         keyStorePath = keyStorePath,
         keyStorePassword = TlsPassword.of(keyStorePassword.toCharArray())
     )
-    val listener = ProductionHttpsListener(config, endpoint)
+    val listener = ProductionHttpsListener(config, endpoint, readiness = { true })
 
     when (listener.start()) {
         LicensingRuntimeListenerResult.Started -> {
