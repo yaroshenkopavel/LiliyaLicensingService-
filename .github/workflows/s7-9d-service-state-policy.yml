@@ -353,6 +353,14 @@ jobs:
           REPLAY="$(docker exec -e PGPASSWORD="$(cat .s79d-pg-runtime)" liliya-s79d-postgres             psql -At -U liliya_s79d_runtime -d liliya_s79d             -c "SELECT replay_sequence FROM licensing_decision_state WHERE subject='s7-9d-service-state-subject' AND product_id='liliya-pro'")"
           test "$REPLAY" = "1"
 
+      - name: Frozen Core rejects wrong identity profile and tampered payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE_S79D_PHASE=negative-hardening           LIVE_S79D_LICENSE_ENDPOINT=https://127.0.0.1:18633/v1/license           LIVE_S79D_SERVICE_STATE_ENDPOINT=https://127.0.0.1:18633/v1/license/service-state           LIVE_S79D_BEARER="$(cat .s79d-auth)"           LIVE_S79D_ENTITLEMENT_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-entitlement-public.der"           LIVE_S79D_SERVICE_STATE_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-service-state-public.der"           LIVE_S79D_SERVICE_STATE_KEY_ID=s7-9d-service-state-key           LIVE_S79D_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s79d-https/truststore.p12"           LIVE_S79D_TRUSTSTORE_PASSWORD="$(cat .s79d-https-pass)"           LIVE_S79D_EVIDENCE_PATH="$GITHUB_WORKSPACE/s79d-hardening-evidence.txt"             gradle -p liliya-core :license-transport-client:test               --tests "pro.liliya.core.licensetransport.LicenseS79dServiceStatePolicyAcceptanceTest.backend_service_state_identity_profile_and_payload_tampering_fail_closed"               --rerun-tasks --console=plain
+
+          grep -F 'LICENSING_S7_9D_HARDENING_EVIDENCE=' s79d-hardening-evidence.txt
+
       - name: Production profile and privacy guards
         shell: bash
         run: |
@@ -365,7 +373,7 @@ jobs:
           ! grep -F "$(cat .s79d-ob-token)" s79d-service.log
           docker exec liliya-s79d-openbao sh -c 'test -s /openbao/audit/openbao-audit.log'
 
-          echo 'LICENSING_S7_9D_EVIDENCE={"frozenEntitlementWireUnchanged":true,"separateServiceStateChannel":true,"requestAuthBeforeStateRead":true,"postgresAuthoritativeState":true,"serviceStateReadOnly":true,"productionServiceStateProfile":true,"testProofProfileRejectedForProduction":true,"exactOpenBaoKeyVersion":true,"frozenStateVerification":true,"policyContextAvailable":true,"licensePolicyEntitled":true,"staleStateRejected":true,"tamperRejected":true,"hiddenRetry":false,"stoppedBeforeAuthorityExecution":true}'
+          echo 'LICENSING_S7_9D_EVIDENCE={"frozenEntitlementWireUnchanged":true,"separateServiceStateChannel":true,"requestAuthBeforeStateRead":true,"postgresAuthoritativeState":true,"serviceStateReadOnly":true,"productionServiceStateProfile":true,"testProofProfileRejectedForProduction":true,"exactOpenBaoKeyVersion":true,"frozenStateVerification":true,"policyContextAvailable":true,"licensePolicyEntitled":true,"staleStateRejected":true,"staleEntitlementReplayDenied":true,"tamperRejected":true,"unknownKeyRejected":true,"unsupportedProfileRejected":true,"tamperedPayloadRejected":true,"hiddenRetry":false,"stoppedBeforeAuthorityExecution":true}'
           echo "=== S7.9D SERVICE-STATE LICENSEPOLICY ACCEPTANCE PASS ==="
 
       - name: Cleanup
