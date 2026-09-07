@@ -14,6 +14,7 @@ import javax.net.ssl.SSLContext
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
+import pro.liliya.licensing.http.LicenseHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpMethod
 import pro.liliya.licensing.http.LicenseHttpRequest
 import pro.liliya.licensing.http.LicenseHttpResponse
