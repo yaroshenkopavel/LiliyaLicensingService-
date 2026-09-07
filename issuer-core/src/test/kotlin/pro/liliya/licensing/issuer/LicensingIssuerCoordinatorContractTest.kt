@@ -63,7 +63,15 @@ class LicensingIssuerCoordinatorContractTest {
             source = EntitlementSourcePort { EntitlementSourceResult.Eligible(source) },
             signer = LicenseEnvelopeSigner { payload, key ->
                 signedPayloads++
-                SigningResult.Signed(SignedLicenseEnvelope(key, payload, byteArrayOf(1)))
+                SigningResult.Signed(
+                    SignedLicenseEnvelope(
+                        pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion(1),
+                        pro.liliya.licensing.signing.SigningAlgorithm("TEST-ED25519"),
+                        key,
+                        payload,
+                        byteArrayOf(1)
+                    )
+                )
             },
             transactions = singleCommitTransactions()
         )
