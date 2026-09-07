@@ -69,6 +69,40 @@ class AuthenticatedServiceStateHttpEndpointContractTest {
     }
 
     @Test
+    fun authenticated_missing_authoritative_state_returns_typed_not_found_without_signing() {
+        val signs = AtomicInteger(0)
+        val endpoint = AuthenticatedServiceStateHttpEndpoint(
+            service = ServiceStateEvidenceService(
+                states = CurrentDecisionStateReadPort { null },
+                signer = ServiceStateProofSigner {
+                    signs.incrementAndGet()
+                    ServiceStateSigningResult.Failed
+                },
+                signingKeyId = ServiceStateSigningKeyId("service-state-key-v1")
+            ),
+            authentication = RequestAuthenticationPort {
+                RequestAuthenticationResult.Authenticated
+            }
+        )
+
+        val response = endpoint.handle(
+            request(authentication = RequestAuthenticationCredential.of("accepted".encodeToByteArray()))
+        )
+
+        assertEquals(404, response.status)
+        assertEquals(0, signs.get())
+        val rejected = assertIs<ServiceStateWireResponse.Rejected>(
+            assertIs<ServiceStateWireDecodeResult.Decoded<ServiceStateWireResponse>>(
+                ServiceStateWireJsonCodec.decodeResponse(response.body)
+            ).value
+        )
+        assertEquals(
+            pro.liliya.licensing.transport.ServiceStateWireFailure.STATE_UNAVAILABLE,
+            rejected.reason
+        )
+    }
+
+    @Test
     fun authenticated_request_reads_once_signs_once_and_returns_separate_evidence() {
         val reads = AtomicInteger(0)
         val signs = AtomicInteger(0)
