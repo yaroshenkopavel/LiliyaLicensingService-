@@ -35,6 +35,14 @@ docker volume rm "$AUDIT_VOLUME" >/dev/null 2>&1 || true
 docker volume create "$DATA_VOLUME" >/dev/null
 docker volume create "$AUDIT_VOLUME" >/dev/null
 
+# Named Docker volumes are root-owned when first created. Prepare them once as root,
+# then run the real OpenBao server as the image's normal non-root user.
+docker run --rm --user 0 \
+  -v "$DATA_VOLUME:/openbao/data" \
+  -v "$AUDIT_VOLUME:/openbao/audit" \
+  "$OPENBAO_IMAGE" \
+  sh -c 'chown -R openbao:openbao /openbao/data /openbao/audit' >/dev/null
+
 cat > "$WORK_DIR/tls/openssl.cnf" <<'EOF'
 [req]
 distinguished_name = dn
@@ -75,7 +83,8 @@ EOF
 
 openssl x509 -req -days 1   -in "$WORK_DIR/tls/server.csr"   -CA "$WORK_DIR/tls/ca.crt"   -CAkey "$WORK_DIR/tls/ca.key"   -CAcreateserial   -out "$WORK_DIR/tls/server.crt"   -extfile "$WORK_DIR/tls/server-ext.cnf" >/dev/null 2>&1
 
-chmod 600 "$WORK_DIR/tls/ca.key" "$WORK_DIR/tls/server.key"
+chmod 600 "$WORK_DIR/tls/ca.key"
+chmod 644 "$WORK_DIR/tls/server.key" "$WORK_DIR/tls/server.crt" "$WORK_DIR/tls/ca.crt"
 
 cat > "$WORK_DIR/config/openbao.hcl" <<'EOF'
 ui = false
