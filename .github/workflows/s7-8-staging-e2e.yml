@@ -1,0 +1,573 @@
+name: S7.8 Staging E2E Restart Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-8-staging-e2e-v0.1"
+  pull_request:
+    paths:
+      - "issuer-https-listener/**"
+      - "issuer-postgres/**"
+      - "issuer-openbao-transit/**"
+      - "issuer-http-endpoint/**"
+      - "issuer-request-auth/**"
+      - "acceptance/s7-8/**"
+      - ".github/workflows/s7-8-staging-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  staging-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Checkout frozen LiliyaCore
+        uses: actions/checkout@v4
+        with:
+          repository: yaroshenkopavel/LiliyaCore-
+          ref: 335fb9dd2f11c4c77983b89f28ebe30d95cb23dd
+          path: liliya-core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Set up Android SDK for frozen LiliyaCore
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Prepare durable PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_ADMIN="$(openssl rand -hex 24)"
+          PG_RUNTIME="$(openssl rand -hex 24)"
+          echo "::add-mask::$PG_ADMIN"
+          echo "::add-mask::$PG_RUNTIME"
+          printf '%s' "$PG_ADMIN" > .s78-pg-admin
+          printf '%s' "$PG_RUNTIME" > .s78-pg-runtime
+          chmod 600 .s78-pg-admin .s78-pg-runtime
+
+          docker volume create liliya-s78-postgres-data >/dev/null
+          docker run -d \
+            --name liliya-s78-postgres \
+            -p 18578:5432 \
+            -v liliya-s78-postgres-data:/var/lib/postgresql/data \
+            -e POSTGRES_PASSWORD="$PG_ADMIN" \
+            -e POSTGRES_DB=liliya_s78 \
+            postgres:17 >/dev/null
+
+          for i in $(seq 1 60); do
+            if docker exec liliya-s78-postgres pg_isready -U postgres -d liliya_s78 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s78-postgres \
+            psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s78 \
+            -c "CREATE ROLE liliya_s78_runtime LOGIN PASSWORD '$PG_RUNTIME' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" \
+            -c "GRANT CONNECT ON DATABASE liliya_s78 TO liliya_s78_runtime" >/dev/null
+
+      - name: Prepare non-dev OpenBao Raft TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .s78-ob/config .s78-ob/tls
+          chmod 700 .s78-ob
+          chmod 755 .s78-ob/tls
+
+          docker volume create liliya-s78-openbao-data >/dev/null
+          docker volume create liliya-s78-openbao-audit >/dev/null
+          docker run --rm --user 0 \
+            -v liliya-s78-openbao-data:/openbao/data \
+            -v liliya-s78-openbao-audit:/openbao/audit \
+            openbao/openbao:2.6.2 \
+            sh -c 'chown -R openbao:openbao /openbao/data /openbao/audit' >/dev/null
+
+          cat > .s78-ob/tls/ca.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+          [dn]
+          CN = Liliya S7.8 OpenBao CA
+          [v3_ca]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,keyCertSign,cRLSign
+          subjectKeyIdentifier = hash
+          EOF
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout .s78-ob/tls/ca.key \
+            -out .s78-ob/tls/ca.crt \
+            -config .s78-ob/tls/ca.cnf >/dev/null 2>&1
+
+          cat > .s78-ob/tls/server.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          req_extensions = req_ext
+          prompt = no
+          [dn]
+          CN = localhost
+          [req_ext]
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = localhost
+          IP.1 = 127.0.0.1
+          EOF
+
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout .s78-ob/tls/server.key \
+            -out .s78-ob/tls/server.csr \
+            -config .s78-ob/tls/server.cnf >/dev/null 2>&1
+
+          cat > .s78-ob/tls/server-ext.cnf <<'EOF'
+          basicConstraints=CA:FALSE
+          keyUsage=digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          EOF
+
+          openssl x509 -req -days 1 \
+            -in .s78-ob/tls/server.csr \
+            -CA .s78-ob/tls/ca.crt \
+            -CAkey .s78-ob/tls/ca.key \
+            -CAcreateserial \
+            -out .s78-ob/tls/server.crt \
+            -extfile .s78-ob/tls/server-ext.cnf >/dev/null 2>&1
+
+          chmod 600 .s78-ob/tls/ca.key
+          chmod 644 .s78-ob/tls/ca.crt .s78-ob/tls/server.crt .s78-ob/tls/server.key
+
+          OB_TRUST_PASS="$(openssl rand -hex 24)"
+          echo "::add-mask::$OB_TRUST_PASS"
+          printf '%s' "$OB_TRUST_PASS" > .s78-ob-trust-pass
+          chmod 600 .s78-ob-trust-pass
+          keytool -importcert -noprompt \
+            -alias s78-ob-ca \
+            -file .s78-ob/tls/ca.crt \
+            -keystore .s78-ob/tls/truststore.p12 \
+            -storetype PKCS12 \
+            -storepass "$OB_TRUST_PASS" >/dev/null
+
+          cat > .s78-ob/config/openbao.hcl <<'EOF'
+          ui = false
+          disable_mlock = true
+
+          storage "raft" {
+            path = "/openbao/data"
+            node_id = "liliya-s78-node-1"
+          }
+
+          listener "tcp" {
+            address = "0.0.0.0:8200"
+            cluster_address = "0.0.0.0:8201"
+            tls_cert_file = "/openbao/tls/server.crt"
+            tls_key_file = "/openbao/tls/server.key"
+          }
+
+          api_addr = "https://127.0.0.1:8200"
+          cluster_addr = "https://127.0.0.1:8201"
+
+          audit "file" "liliya-s78-audit" {
+            options {
+              file_path = "/openbao/audit/openbao-audit.log"
+              mode = "0600"
+            }
+          }
+          EOF
+
+          docker run -d \
+            --name liliya-s78-openbao \
+            -p 18579:8200 \
+            -p 18580:8201 \
+            -v liliya-s78-openbao-data:/openbao/data \
+            -v liliya-s78-openbao-audit:/openbao/audit \
+            -v "$GITHUB_WORKSPACE/.s78-ob/config/openbao.hcl:/tmp/s78.hcl:ro" \
+            -v "$GITHUB_WORKSPACE/.s78-ob/tls:/openbao/tls:ro" \
+            openbao/openbao:2.6.2 \
+            server -config=/tmp/s78.hcl >/dev/null
+
+          for i in $(seq 1 60); do
+            CODE="$(curl -sS --cacert .s78-ob/tls/ca.crt -o /dev/null -w '%{http_code}' https://127.0.0.1:18579/v1/sys/health || true)"
+            if [[ "$CODE" =~ ^(200|429|472|473|501|503)$ ]]; then
+              break
+            fi
+            sleep 1
+          done
+
+          INIT="$(docker exec \
+            -e BAO_ADDR=https://127.0.0.1:8200 \
+            -e BAO_CACERT=/openbao/tls/ca.crt \
+            liliya-s78-openbao \
+            bao operator init -key-shares=1 -key-threshold=1 -format=json)"
+
+          ROOT="$(printf '%s' "$INIT" | jq -r '.root_token')"
+          UNSEAL="$(printf '%s' "$INIT" | jq -r '.unseal_keys_b64[0] // .keys_base64[0]')"
+          unset INIT
+          echo "::add-mask::$ROOT"
+          echo "::add-mask::$UNSEAL"
+          printf '%s' "$UNSEAL" > .s78-ob-unseal
+          chmod 600 .s78-ob-unseal
+
+          curl -fsS --cacert .s78-ob/tls/ca.crt \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d "$(jq -n --arg key "$UNSEAL" '{key:$key}')" \
+            https://127.0.0.1:18579/v1/sys/unseal >/dev/null
+
+          curl -fsS --cacert .s78-ob/tls/ca.crt \
+            -H "X-Vault-Token: $ROOT" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d '{"type":"transit"}' \
+            https://127.0.0.1:18579/v1/sys/mounts/transit >/dev/null
+
+          curl -fsS --cacert .s78-ob/tls/ca.crt \
+            -H "X-Vault-Token: $ROOT" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}' \
+            https://127.0.0.1:18579/v1/transit/keys/license-signing-s78 >/dev/null
+
+          POLICY='path "transit/keys/license-signing-s78" { capabilities = ["read"] }
+          path "transit/sign/license-signing-s78/sha2-256" { capabilities = ["update"] }'
+
+          curl -fsS --cacert .s78-ob/tls/ca.crt \
+            -H "X-Vault-Token: $ROOT" \
+            -H "Content-Type: application/json" \
+            -X PUT \
+            -d "$(jq -n --arg policy "$POLICY" '{policy:$policy}')" \
+            https://127.0.0.1:18579/v1/sys/policies/acl/liliya-s78-signer >/dev/null
+
+          APP_TOKEN="$(
+            curl -fsS --cacert .s78-ob/tls/ca.crt \
+              -H "X-Vault-Token: $ROOT" \
+              -H "Content-Type: application/json" \
+              -X POST \
+              -d '{"policies":["liliya-s78-signer"],"ttl":"1h","renewable":false,"no_default_policy":true}' \
+              https://127.0.0.1:18579/v1/auth/token/create |
+            jq -r '.auth.client_token'
+          )"
+
+          echo "::add-mask::$APP_TOKEN"
+          printf '%s' "$APP_TOKEN" > .s78-ob-token
+          chmod 600 .s78-ob-token
+
+          KEY_META="$(curl -fsS --cacert .s78-ob/tls/ca.crt \
+            -H "X-Vault-Token: $APP_TOKEN" \
+            https://127.0.0.1:18579/v1/transit/keys/license-signing-s78)"
+
+          printf '%s' "$KEY_META" | jq -r '.data.keys["1"].public_key' > .s78-ob-public.pem
+          openssl pkey -pubin -in .s78-ob-public.pem -outform DER -out .s78-ob-public.der
+
+      - name: Prepare external HTTPS and request-auth identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .s78-https
+          chmod 700 .s78-https
+
+          TLS_PASS="$(openssl rand -hex 24)"
+          AUTH_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$TLS_PASS"
+          echo "::add-mask::$AUTH_SECRET"
+          printf '%s' "$TLS_PASS" > .s78-https-pass
+          printf '%s' "$AUTH_SECRET" > .s78-auth
+          chmod 600 .s78-https-pass .s78-auth
+
+          cat > .s78-https/ca.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+          [dn]
+          CN = Liliya S7.8 HTTPS CA
+          [v3_ca]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,keyCertSign,cRLSign
+          subjectKeyIdentifier = hash
+          EOF
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout .s78-https/ca.key \
+            -out .s78-https/ca.crt \
+            -config .s78-https/ca.cnf >/dev/null 2>&1
+
+          cat > .s78-https/server.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          req_extensions = req_ext
+          prompt = no
+          [dn]
+          CN = localhost
+          [req_ext]
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = localhost
+          IP.1 = 127.0.0.1
+          EOF
+
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout .s78-https/server.key \
+            -out .s78-https/server.csr \
+            -config .s78-https/server.cnf >/dev/null 2>&1
+
+          cat > .s78-https/server-ext.cnf <<'EOF'
+          basicConstraints=CA:FALSE
+          keyUsage=digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          EOF
+
+          openssl x509 -req -days 1 \
+            -in .s78-https/server.csr \
+            -CA .s78-https/ca.crt \
+            -CAkey .s78-https/ca.key \
+            -CAcreateserial \
+            -out .s78-https/server.crt \
+            -extfile .s78-https/server-ext.cnf >/dev/null 2>&1
+
+          openssl pkcs12 -export \
+            -inkey .s78-https/server.key \
+            -in .s78-https/server.crt \
+            -certfile .s78-https/ca.crt \
+            -name liliya-s78 \
+            -passout "pass:$TLS_PASS" \
+            -out .s78-https/server.p12 >/dev/null 2>&1
+
+          keytool -importcert -noprompt \
+            -alias s78-https-ca \
+            -file .s78-https/ca.crt \
+            -keystore .s78-https/truststore.p12 \
+            -storetype PKCS12 \
+            -storepass "$TLS_PASS" >/dev/null
+
+      - name: Initialize schema with admin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_ADMIN="$(cat .s78-pg-admin)"
+          APP_TOKEN="$(cat .s78-ob-token)"
+          AUTH_SECRET="$(cat .s78-auth)"
+          TLS_PASS="$(cat .s78-https-pass)"
+          OB_TRUST_PASS="$(cat .s78-ob-trust-pass)"
+
+          S7_8_INITIALIZE_SCHEMA=true \
+          S7_8_POSTGRES_URL="jdbc:postgresql://127.0.0.1:18578/liliya_s78" \
+          S7_8_POSTGRES_USER=postgres \
+          S7_8_POSTGRES_PASSWORD="$PG_ADMIN" \
+          S7_8_OPENBAO_ADDR=https://127.0.0.1:18579 \
+          S7_8_OPENBAO_TOKEN="$APP_TOKEN" \
+          S7_8_OPENBAO_KEY=license-signing-s78 \
+          S7_8_OPENBAO_KEY_VERSION=1 \
+          S7_8_REQUEST_AUTH_SECRET="$AUTH_SECRET" \
+          S7_8_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s78-https/server.p12" \
+          S7_8_TLS_KEYSTORE_PASSWORD="$TLS_PASS" \
+          S7_8_TLS_PORT=18581 \
+          S7_8_OPENBAO_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s78-ob/tls/truststore.p12" \
+          S7_8_OPENBAO_TRUSTSTORE_PASSWORD="$OB_TRUST_PASS" \
+            gradle --no-daemon :issuer-https-listener:runS78StagingHttpsAcceptanceHost \
+              --console=plain > s78-admin-host.log 2>&1 &
+          echo $! > .s78-admin-host.pid
+
+          for i in $(seq 1 90); do
+            if grep -F 'LICENSING_S7_8_STAGING_HOST_READY=' s78-admin-host.log >/dev/null 2>&1; then
+              break
+            fi
+            if ! kill -0 "$(cat .s78-admin-host.pid)" >/dev/null 2>&1; then
+              cat s78-admin-host.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          kill "$(cat .s78-admin-host.pid)" >/dev/null 2>&1 || true
+          wait "$(cat .s78-admin-host.pid)" >/dev/null 2>&1 || true
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s78-postgres \
+            psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s78 \
+            -c "GRANT USAGE ON SCHEMA public TO liliya_s78_runtime" \
+            -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s78_runtime" >/dev/null
+
+      - name: Phase 1 staging ISSUE REFRESH
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_RUNTIME="$(cat .s78-pg-runtime)"
+          APP_TOKEN="$(cat .s78-ob-token)"
+          AUTH_SECRET="$(cat .s78-auth)"
+          TLS_PASS="$(cat .s78-https-pass)"
+          OB_TRUST_PASS="$(cat .s78-ob-trust-pass)"
+
+          S7_8_INITIALIZE_SCHEMA=false \
+          S7_8_POSTGRES_URL="jdbc:postgresql://127.0.0.1:18578/liliya_s78" \
+          S7_8_POSTGRES_USER=liliya_s78_runtime \
+          S7_8_POSTGRES_PASSWORD="$PG_RUNTIME" \
+          S7_8_OPENBAO_ADDR=https://127.0.0.1:18579 \
+          S7_8_OPENBAO_TOKEN="$APP_TOKEN" \
+          S7_8_OPENBAO_KEY=license-signing-s78 \
+          S7_8_OPENBAO_KEY_VERSION=1 \
+          S7_8_REQUEST_AUTH_SECRET="$AUTH_SECRET" \
+          S7_8_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s78-https/server.p12" \
+          S7_8_TLS_KEYSTORE_PASSWORD="$TLS_PASS" \
+          S7_8_TLS_PORT=18581 \
+          S7_8_OPENBAO_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s78-ob/tls/truststore.p12" \
+          S7_8_OPENBAO_TRUSTSTORE_PASSWORD="$OB_TRUST_PASS" \
+            gradle --no-daemon :issuer-https-listener:runS78StagingHttpsAcceptanceHost \
+              --console=plain > s78-phase1-host.log 2>&1 &
+          echo $! > .s78-host.pid
+
+          for i in $(seq 1 90); do
+            if grep -F 'LICENSING_S7_8_STAGING_HOST_READY=' s78-phase1-host.log >/dev/null 2>&1; then
+              break
+            fi
+            if ! kill -0 "$(cat .s78-host.pid)" >/dev/null 2>&1; then
+              cat s78-phase1-host.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          cp acceptance/s7-8/LicenseS78StagingAcceptanceTest.kt \
+            liliya-core/license-transport-client/src/test/kotlin/pro/liliya/core/licensetransport/
+
+          LIVE_S78_PHASE=phase1 \
+          LIVE_S78_HTTPS_ENDPOINT=https://127.0.0.1:18581/v1/license \
+          LIVE_S78_BEARER="$AUTH_SECRET" \
+          LIVE_S78_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s78-ob-public.der" \
+          LIVE_S78_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s78-https/truststore.p12" \
+          LIVE_S78_TRUSTSTORE_PASSWORD="$TLS_PASS" \
+          LIVE_S78_EVIDENCE_PATH="$GITHUB_WORKSPACE/s78-phase1-evidence.txt" \
+            gradle -p liliya-core \
+              :license-transport-client:test \
+              --tests "pro.liliya.core.licensetransport.LicenseS78StagingAcceptanceTest" \
+              --rerun-tasks \
+              --console=plain
+
+          grep -F 'LICENSING_S7_8_PHASE1_EVIDENCE=' s78-phase1-evidence.txt
+
+          kill "$(cat .s78-host.pid)" >/dev/null 2>&1 || true
+          wait "$(cat .s78-host.pid)" >/dev/null 2>&1 || true
+
+      - name: Restart PostgreSQL and OpenBao durable state
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker restart liliya-s78-postgres >/dev/null
+          for i in $(seq 1 60); do
+            if docker exec liliya-s78-postgres pg_isready -U postgres -d liliya_s78 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          docker rm -f liliya-s78-openbao >/dev/null
+          docker run -d \
+            --name liliya-s78-openbao \
+            -p 18579:8200 \
+            -p 18580:8201 \
+            -v liliya-s78-openbao-data:/openbao/data \
+            -v liliya-s78-openbao-audit:/openbao/audit \
+            -v "$GITHUB_WORKSPACE/.s78-ob/config/openbao.hcl:/tmp/s78.hcl:ro" \
+            -v "$GITHUB_WORKSPACE/.s78-ob/tls:/openbao/tls:ro" \
+            openbao/openbao:2.6.2 \
+            server -config=/tmp/s78.hcl >/dev/null
+
+          for i in $(seq 1 60); do
+            CODE="$(curl -sS --cacert .s78-ob/tls/ca.crt -o /dev/null -w '%{http_code}' https://127.0.0.1:18579/v1/sys/health || true)"
+            if [[ "$CODE" =~ ^(200|429|472|473|501|503)$ ]]; then
+              break
+            fi
+            sleep 1
+          done
+
+          UNSEAL="$(cat .s78-ob-unseal)"
+          curl -fsS --cacert .s78-ob/tls/ca.crt \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d "$(jq -n --arg key "$UNSEAL" '{key:$key}')" \
+            https://127.0.0.1:18579/v1/sys/unseal >/dev/null
+
+      - name: Phase 2 after restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_RUNTIME="$(cat .s78-pg-runtime)"
+          APP_TOKEN="$(cat .s78-ob-token)"
+          AUTH_SECRET="$(cat .s78-auth)"
+          TLS_PASS="$(cat .s78-https-pass)"
+          OB_TRUST_PASS="$(cat .s78-ob-trust-pass)"
+
+          S7_8_INITIALIZE_SCHEMA=false \
+          S7_8_POSTGRES_URL="jdbc:postgresql://127.0.0.1:18578/liliya_s78" \
+          S7_8_POSTGRES_USER=liliya_s78_runtime \
+          S7_8_POSTGRES_PASSWORD="$PG_RUNTIME" \
+          S7_8_OPENBAO_ADDR=https://127.0.0.1:18579 \
+          S7_8_OPENBAO_TOKEN="$APP_TOKEN" \
+          S7_8_OPENBAO_KEY=license-signing-s78 \
+          S7_8_OPENBAO_KEY_VERSION=1 \
+          S7_8_REQUEST_AUTH_SECRET="$AUTH_SECRET" \
+          S7_8_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s78-https/server.p12" \
+          S7_8_TLS_KEYSTORE_PASSWORD="$TLS_PASS" \
+          S7_8_TLS_PORT=18581 \
+          S7_8_OPENBAO_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s78-ob/tls/truststore.p12" \
+          S7_8_OPENBAO_TRUSTSTORE_PASSWORD="$OB_TRUST_PASS" \
+            gradle --no-daemon :issuer-https-listener:runS78StagingHttpsAcceptanceHost \
+              --console=plain > s78-phase2-host.log 2>&1 &
+          echo $! > .s78-host.pid
+
+          for i in $(seq 1 90); do
+            if grep -F 'LICENSING_S7_8_STAGING_HOST_READY=' s78-phase2-host.log >/dev/null 2>&1; then
+              break
+            fi
+            if ! kill -0 "$(cat .s78-host.pid)" >/dev/null 2>&1; then
+              cat s78-phase2-host.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          LIVE_S78_PHASE=phase2 \
+          LIVE_S78_HTTPS_ENDPOINT=https://127.0.0.1:18581/v1/license \
+          LIVE_S78_BEARER="$AUTH_SECRET" \
+          LIVE_S78_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s78-ob-public.der" \
+          LIVE_S78_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s78-https/truststore.p12" \
+          LIVE_S78_TRUSTSTORE_PASSWORD="$TLS_PASS" \
+          LIVE_S78_EVIDENCE_PATH="$GITHUB_WORKSPACE/s78-phase2-evidence.txt" \
+            gradle -p liliya-core \
+              :license-transport-client:test \
+              --tests "pro.liliya.core.licensetransport.LicenseS78StagingAcceptanceTest" \
+              --rerun-tasks \
+              --console=plain
+
+          grep -F 'LICENSING_S7_8_PHASE2_EVIDENCE=' s78-phase2-evidence.txt
+          docker exec liliya-s78-openbao sh -c 'test -s /openbao/audit/openbao-audit.log'
+
+          echo 'LICENSING_S7_8_STAGING_EVIDENCE={"https":true,"requestAuthentication":true,"postgresAuthoritative":true,"schemaMigrationSeparated":true,"nonDevOpenBaoRaftTls":true,"frozenCore":true,"phase1ReplayZeroToOne":true,"backendRestart":true,"postgresRestart":true,"openBaoRestart":true,"phase2ReplayTwo":true,"auditPresent":true,"hiddenRetry":false,"stoppedBeforeAuthorityExecution":true}'
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .s78-host.pid ]]; then
+            kill "$(cat .s78-host.pid)" >/dev/null 2>&1 || true
+          fi
+          docker rm -f liliya-s78-postgres liliya-s78-openbao >/dev/null 2>&1 || true
+          docker volume rm liliya-s78-postgres-data liliya-s78-openbao-data liliya-s78-openbao-audit >/dev/null 2>&1 || true
+          rm -rf .s78-ob .s78-https
+          rm -f .s78-pg-admin .s78-pg-runtime .s78-ob-token .s78-ob-unseal .s78-ob-trust-pass .s78-auth .s78-https-pass

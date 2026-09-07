@@ -14,6 +14,8 @@ dependencies {
     testImplementation(project(":issuer-core"))
     testImplementation(project(":issuer-testkit"))
     testImplementation(project(":issuer-openbao-transit"))
+    testImplementation(project(":issuer-postgres"))
+    testImplementation("org.postgresql:postgresql:42.7.7")
     testImplementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
@@ -37,4 +39,23 @@ tasks.register<JavaExec>("runS76AuthenticatedHttpsAcceptanceHost") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("pro.liliya.licensing.https.S76AuthenticatedHttpsAcceptanceHostKt")
+}
+
+
+tasks.register<JavaExec>("runS78StagingHttpsAcceptanceHost") {
+    group = "verification"
+    description = "Runs the S7.8 staging HTTPS host with PostgreSQL authoritative state."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("pro.liliya.licensing.https.S78StagingHttpsAcceptanceHostKt")
+
+    val trustStorePath = providers.environmentVariable("S7_8_OPENBAO_TRUSTSTORE_PATH").orNull
+    val trustStorePassword = providers.environmentVariable("S7_8_OPENBAO_TRUSTSTORE_PASSWORD").orNull
+    if (!trustStorePath.isNullOrBlank() && !trustStorePassword.isNullOrBlank()) {
+        jvmArgs(
+            "-Djavax.net.ssl.trustStore=$trustStorePath",
+            "-Djavax.net.ssl.trustStoreType=PKCS12",
+            "-Djavax.net.ssl.trustStorePassword=$trustStorePassword"
+        )
+    }
 }
