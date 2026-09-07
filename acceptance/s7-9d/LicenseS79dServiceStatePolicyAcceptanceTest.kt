@@ -44,11 +44,11 @@ import pro.liliya.core.license.LicenseServiceProtocolVersion
 import pro.liliya.core.license.LicenseServiceRequestId
 import pro.liliya.core.license.LicenseServiceSecurityScope
 import pro.liliya.core.license.LicenseServiceStateAcceptanceComposition
+import pro.liliya.core.license.LicenseServiceStateAcceptanceRejection
 import pro.liliya.core.license.LicenseServiceStateAcceptanceResult
 import pro.liliya.core.license.LicenseServiceStateEnvelope
 import pro.liliya.core.license.LicenseServiceTrustedKeyResolver
 import pro.liliya.core.license.LicenseServiceTrustedVerificationKey
-import pro.liliya.core.license.LicenseServiceVerificationRejection
 import pro.liliya.core.license.LicenseSubject
 import pro.liliya.core.license.LicenseTrustedKeyResolver
 import pro.liliya.core.license.LicenseTrustedVerificationKey
@@ -82,31 +82,56 @@ class LicenseS79dServiceStatePolicyAcceptanceTest {
         val verifiedEntitlement = verifyEntitlement(entitlementSigned)
         assertEquals(0L, verifiedEntitlement.entitlement.replaySequence?.value)
 
-        val serviceEnvelope = serviceStateEnvelope("s7-9d-state-001")
+        val serviceEnvelopeReplayZero = serviceStateEnvelope("s7-9d-state-001")
         val acceptance = serviceStateAcceptance()
-        val accepted = assertIs<LicenseServiceStateAcceptanceResult.Advanced>(
-            acceptance.verifyAndAccept(serviceEnvelope)
+        val acceptedZero = assertIs<LicenseServiceStateAcceptanceResult.Advanced>(
+            acceptance.verifyAndAccept(serviceEnvelopeReplayZero)
         )
-        assertEquals(0L, accepted.snapshot.state.replaySequence?.value)
+        assertEquals(0L, acceptedZero.snapshot.state.replaySequence?.value)
         assertEquals(
             verifiedEntitlement.entitlement.revocationEpoch,
-            accepted.snapshot.state.revocationEpoch
+            acceptedZero.snapshot.state.revocationEpoch
+        )
+
+        val refreshedSigned = assertIs<LicenseClientTransportResult.Signed>(
+            entitlementClient().execute(
+                request(
+                    operation = LicenseServiceOperation.REFRESH,
+                    requestId = "s7-9d-entitlement-refresh-002"
+                )
+            )
+        )
+        val refreshedEntitlement = verifyEntitlement(refreshedSigned)
+        assertEquals(1L, refreshedEntitlement.entitlement.replaySequence?.value)
+
+        val serviceEnvelopeReplayOne = serviceStateEnvelope("s7-9d-state-002")
+        val acceptedOne = assertIs<LicenseServiceStateAcceptanceResult.Advanced>(
+            acceptance.verifyAndAccept(serviceEnvelopeReplayOne)
+        )
+        assertEquals(1L, acceptedOne.snapshot.state.replaySequence?.value)
+
+        val stale = assertIs<LicenseServiceStateAcceptanceResult.StateRejected>(
+            acceptance.verifyAndAccept(serviceEnvelopeReplayZero)
+        )
+        assertEquals(
+            LicenseServiceStateAcceptanceRejection.STALE_REPLAY_SEQUENCE,
+            stale.reason
         )
 
         val context = assertIs<LicenseServicePolicyContextResult.Available>(
             acceptance.policyContext(
                 scope = LicenseServiceSecurityScope(
-                    productId = verifiedEntitlement.entitlement.productId,
-                    subject = verifiedEntitlement.entitlement.subject
+                    productId = refreshedEntitlement.entitlement.productId,
+                    subject = refreshedEntitlement.entitlement.subject
                 ),
-                now = verifiedEntitlement.entitlement.notBefore.plusSeconds(1),
+                now = refreshedEntitlement.entitlement.notBefore.plusSeconds(1),
                 suspiciousTimeOrReplayState = false
             )
         ).context
 
         val decision = assertIs<LicenseDecision.Entitled>(
             LicensePolicy().evaluate(
-                verified = verifiedEntitlement,
+                verified = refreshedEntitlement,
                 request = LicensePolicyRequest(
                     productId = LicenseProductId("liliya-pro"),
                     feature = LicenseFeature("model.local"),
@@ -115,13 +140,15 @@ class LicenseS79dServiceStatePolicyAcceptanceTest {
                 context = context
             )
         )
-        assertEquals(0L, decision.receipt.replaySequence?.value)
+        assertEquals(1L, decision.receipt.replaySequence?.value)
 
         writeEvidence(
             "LICENSING_S7_9D_POSITIVE_EVIDENCE=" +
                 "{\"backendServiceState\":true,\"productionProfile\":true," +
-                "\"frozenStateVerification\":true,\"policyContextAvailable\":true," +
-                "\"licensePolicyEntitled\":true,\"stoppedBeforeAuthorityExecution\":true}"
+                "\"frozenStateVerification\":true,\"serviceStateReplayZero\":true," +
+                "\"serviceStateReplayOne\":true,\"staleBackendStateRejected\":true," +
+                "\"policyContextAvailable\":true,\"licensePolicyEntitled\":true," +
+                "\"stoppedBeforeAuthorityExecution\":true}"
         )
     }
 
