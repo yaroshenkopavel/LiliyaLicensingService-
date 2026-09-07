@@ -26,7 +26,8 @@ fun main() {
                 contentType = null,
                 body = byteArrayOf()
             )
-        }
+        },
+        readiness = { true }
     )
 
     when (listener.start()) {
