@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: yaroshenkopavel/LiliyaCore-
-          ref: c0ce3ba9a4eaa18893464e8f91ea8cd1feefd1f3
+          ref: 8a9bfedab3a3378897989e8fb025988e4a6de0af
           path: liliya-core
 
       - uses: actions/setup-java@v4
@@ -128,19 +128,22 @@ jobs:
         env:
           LIVE_S6_HTTP_ENDPOINT: http://127.0.0.1:18300/v1/license
           LIVE_S6_PUBLIC_KEY_DER_PATH: ${{ github.workspace }}/s6-public-key.der
+          LIVE_S6_EVIDENCE_PATH: ${{ github.workspace }}/s6-issue-evidence.txt
         run: |
           set -euo pipefail
 
           gradle -p liliya-core             :license-transport-client:test             --tests "pro.liliya.core.licensetransport.LicenseS6IssueTransportCompatibilityTest"             --console=plain             2>&1 | tee s6-issue-e2e.log
 
-          grep -F 'LICENSING_S6_4_ISSUE_EVIDENCE=' s6-issue-e2e.log
+          test -s s6-issue-evidence.txt
+          cat s6-issue-evidence.txt
+          grep -F 'LICENSING_S6_4_ISSUE_EVIDENCE=' s6-issue-evidence.txt
 
       - name: Final evidence and cleanup
         if: always()
         shell: bash
         run: |
           grep -F 'LICENSING_S6_4_HOST_READY=' s6-host.log 2>/dev/null || true
-          grep -F 'LICENSING_S6_4_ISSUE_EVIDENCE=' s6-issue-e2e.log 2>/dev/null || true
+          grep -F 'LICENSING_S6_4_ISSUE_EVIDENCE=' s6-issue-evidence.txt 2>/dev/null || true
 
           if [[ -f s6-host.pid ]]; then
             kill "$(cat s6-host.pid)" >/dev/null 2>&1 || true
