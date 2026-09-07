@@ -18,3 +18,11 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.register<JavaExec>("runHttpsAcceptanceHost") {
+    group = "verification"
+    description = "Runs the S7.6 HTTPS certificate lifecycle acceptance host."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("pro.liliya.licensing.https.ProductionHttpsAcceptanceHostKt")
+}
