@@ -1,5 +1,6 @@
 package pro.liliya.licensing.http
 
+import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.issuer.LicensingIssuerCoordinator
 import pro.liliya.licensing.issuer.LicensingIssuerResult
 import pro.liliya.licensing.protocol.LicenseServiceFailure
@@ -16,11 +17,12 @@ enum class LicenseHttpMethod {
 data class LicenseHttpRequest(
     val method: LicenseHttpMethod,
     val path: String,
-    val body: ByteArray
+    val body: ByteArray,
+    val authentication: RequestAuthenticationCredential? = null
 ) {
     override fun toString(): String =
         "LicenseHttpRequest(method=" + method +
-            ",path=<redacted>,body=<redacted>)"
+            ",path=<redacted>,body=<redacted>,authentication=<redacted>)"
 }
 
 data class LicenseHttpResponse(

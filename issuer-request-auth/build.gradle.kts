@@ -7,10 +7,6 @@ kotlin {
 }
 
 dependencies {
-    api(project(":issuer-core"))
-    api(project(":issuer-transport-contract"))
-    api(project(":issuer-request-auth"))
-
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
 }
