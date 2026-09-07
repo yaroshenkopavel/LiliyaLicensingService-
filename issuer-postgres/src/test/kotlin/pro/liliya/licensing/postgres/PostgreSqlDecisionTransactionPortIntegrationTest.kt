@@ -150,6 +150,51 @@ class PostgreSqlDecisionTransactionPortIntegrationTest {
     }
 
     @Test
+    fun database_write_failure_rolls_back_without_publishing_candidate_state() {
+        dataSource().connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    """
+                    CREATE OR REPLACE FUNCTION fail_licensing_write()
+                    RETURNS trigger AS '
+                    BEGIN
+                        RAISE EXCEPTION ''forced licensing write failure'';
+                    END;
+                    ' LANGUAGE plpgsql
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    CREATE TRIGGER licensing_decision_state_fail_write
+                    BEFORE INSERT OR UPDATE ON licensing_decision_state
+                    FOR EACH ROW EXECUTE FUNCTION fail_licensing_write()
+                    """.trimIndent()
+                )
+            }
+        }
+
+        try {
+            val result = port.transact(scope) {
+                DecisionCandidate(DecisionState(0, 1), envelope(0))
+            }
+
+            val rejected = assertIs<DecisionTransactionResult.Rejected>(result)
+            assertEquals(DecisionTransactionFailure.INTERNAL_FAILURE, rejected.reason)
+            assertEquals(null, port.inspect(scope))
+        } finally {
+            dataSource().connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute(
+                        "DROP TRIGGER IF EXISTS licensing_decision_state_fail_write " +
+                            "ON licensing_decision_state"
+                    )
+                    statement.execute("DROP FUNCTION IF EXISTS fail_licensing_write()")
+                }
+            }
+        }
+    }
+
+    @Test
     fun concurrent_same_scope_writers_serialize_without_lost_update() {
         val workers = 8
         val ready = CountDownLatch(workers)
