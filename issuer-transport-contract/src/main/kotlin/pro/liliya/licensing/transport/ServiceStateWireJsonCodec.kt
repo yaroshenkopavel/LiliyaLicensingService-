@@ -140,8 +140,8 @@ object ServiceStateWireJsonCodec {
         return json.writeValueAsBytes(root)
     }
 
-    fun decodeResponse(bytes: ByteArray): ServiceStateWireDecodeResult<ServiceStateWireResponse> =
-        try {
+    fun decodeResponse(bytes: ByteArray): ServiceStateWireDecodeResult<ServiceStateWireResponse> {
+        return try {
             val root = json.readTree(bytes)
             val wireVersion = requiredInt(root, "wireVersion")
             if (wireVersion != currentVersion.value) {
@@ -199,6 +199,7 @@ object ServiceStateWireJsonCodec {
         } catch (_: Exception) {
             ServiceStateWireDecodeResult.ProtocolFailure
         }
+    }
 
     private fun requiredText(root: JsonNode, name: String): String {
         val node = root.get(name) ?: error("missing " + name)
