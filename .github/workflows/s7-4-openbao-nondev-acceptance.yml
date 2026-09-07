@@ -1,0 +1,33 @@
+name: S7.4 Non-Dev OpenBao Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-4-openbao-nondev-v0.1"
+  pull_request:
+    paths:
+      - "scripts/run-s7-4-openbao-nondev-acceptance.sh"
+      - ".github/workflows/s7-4-openbao-nondev-acceptance.yml"
+      - "issuer-openbao-transit/**"
+      - "issuer-deployment/**"
+
+permissions:
+  contents: read
+
+jobs:
+  nondev-openbao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Run non-dev OpenBao Raft TLS acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./scripts/run-s7-4-openbao-nondev-acceptance.sh 2>&1 | tee s7-4-openbao.log
+          grep -F 'LICENSING_S7_4_OPENBAO_EVIDENCE=' s7-4-openbao.log
+          grep -F '=== S7.4 NON-DEV OPENBAO ACCEPTANCE PASS ===' s7-4-openbao.log
