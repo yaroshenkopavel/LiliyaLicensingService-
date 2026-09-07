@@ -37,6 +37,50 @@ class S5ProtocolContractTest {
     }
 
     @Test
+    fun raw_malformed_request_is_rejected_as_typed_invalid_request() {
+        val rejected = assertIs<LicenseServiceRequestCreationResult.Rejected>(
+            LicenseServiceRequestFactory.create(
+                protocolVersion = 1,
+                operation = "ISSUE",
+                productId = "liliya-pro",
+                subjectReference = "   "
+            )
+        )
+
+        assertEquals(LicenseServiceFailure.INVALID_REQUEST, rejected.reason)
+    }
+
+    @Test
+    fun unknown_raw_operation_is_rejected_as_typed_invalid_request() {
+        val rejected = assertIs<LicenseServiceRequestCreationResult.Rejected>(
+            LicenseServiceRequestFactory.create(
+                protocolVersion = 1,
+                operation = "MUTATE_OLD_LICENSE",
+                productId = "liliya-pro",
+                subjectReference = "subject-001"
+            )
+        )
+
+        assertEquals(LicenseServiceFailure.INVALID_REQUEST, rejected.reason)
+    }
+
+    @Test
+    fun raw_refresh_request_is_created_without_old_envelope_field() {
+        val created = assertIs<LicenseServiceRequestCreationResult.Created>(
+            LicenseServiceRequestFactory.create(
+                protocolVersion = 1,
+                operation = "REFRESH",
+                productId = "liliya-pro",
+                subjectReference = "subject-001",
+                requestId = "refresh-attempt-001"
+            )
+        )
+
+        assertEquals(LicenseOperation.REFRESH, created.request.operation)
+        assertEquals("refresh-attempt-001", created.request.requestId)
+    }
+
+    @Test
     fun canonical_composition_rejects_structurally_invalid_entitlement() {
         val result = CanonicalEntitlementComposer.compose(
             decision(features = emptySet())
