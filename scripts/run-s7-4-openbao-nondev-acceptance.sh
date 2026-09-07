@@ -27,6 +27,13 @@ cleanup() {
   docker volume rm "$AUDIT_VOLUME" >/dev/null 2>&1 || true
   rm -rf "$WORK_DIR"
 }
+
+diagnose_failure() {
+  echo "=== S7.4 OPENBAO SERVER DIAGNOSTIC ===" >&2
+  docker logs "$CONTAINER_NAME" 2>&1 | tail -120 >&2 || true
+}
+
+trap diagnose_failure ERR
 trap cleanup EXIT
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
