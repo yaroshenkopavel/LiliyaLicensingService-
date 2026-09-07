@@ -139,7 +139,7 @@ if [[ -z "$ROOT_TOKEN" || -z "$UNSEAL_KEY" ]]; then
   exit 1
 fi
 
-curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "Content-Type: application/json"   -X PUT   -d "$(jq -n --arg key "$UNSEAL_KEY" '{key:$key}')"   "$OPENBAO_ADDR/v1/sys/unseal" >/dev/null
+curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "Content-Type: application/json"   -X POST   -d "$(jq -n --arg key "$UNSEAL_KEY" '{key:$key}')"   "$OPENBAO_ADDR/v1/sys/unseal" >/dev/null
 
 curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X POST   -d '{"type":"transit"}'   "$OPENBAO_ADDR/v1/sys/mounts/transit" >/dev/null
 
@@ -180,7 +180,7 @@ docker exec "$CONTAINER_NAME" sh -c 'test -s /openbao/audit/openbao-audit.log'
 docker rm -f "$CONTAINER_NAME" >/dev/null
 start_server
 
-curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "Content-Type: application/json"   -X PUT   -d "$(jq -n --arg key "$UNSEAL_KEY" '{key:$key}')"   "$OPENBAO_ADDR/v1/sys/unseal" >/dev/null
+curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "Content-Type: application/json"   -X POST   -d "$(jq -n --arg key "$UNSEAL_KEY" '{key:$key}')"   "$OPENBAO_ADDR/v1/sys/unseal" >/dev/null
 
 KEY_META="$(
   curl -fsS --cacert "$WORK_DIR/tls/ca.crt"     -H "X-Vault-Token: $APP_TOKEN"     "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY"
