@@ -3,6 +3,7 @@ package pro.liliya.licensing.observability
 import java.io.PrintStream
 
 enum class LicensingOperationalEnvironment {
+    UNKNOWN,
     DEVELOPMENT,
     STAGING,
     PRODUCTION
