@@ -84,6 +84,9 @@ jobs:
 
           APP_TOKEN="$(echo "$APP_TOKEN_RESPONSE" | jq -r '.auth.client_token // empty')"
           test -n "$APP_TOKEN"
+          echo "::add-mask::$APP_TOKEN"
+          printf '%s' "$APP_TOKEN" > .s6-openbao-app-token
+          chmod 600 .s6-openbao-app-token
 
           KEY_META="$(
             curl -fsS               -H "X-Vault-Token: $APP_TOKEN"               "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY"
@@ -95,7 +98,6 @@ jobs:
 
           {
             echo "S6_OPENBAO_ADDR=$OPENBAO_ADDR"
-            echo "S6_OPENBAO_TOKEN=$APP_TOKEN"
             echo "S6_OPENBAO_KEY=$OPENBAO_KEY"
             echo "S6_OPENBAO_KEY_VERSION=2"
           } >> "$GITHUB_ENV"
@@ -105,7 +107,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          gradle --no-daemon :issuer-s6-acceptance-host:run --console=plain             > s6-host.log 2>&1 &
+          S6_OPENBAO_TOKEN="$(cat .s6-openbao-app-token)"             gradle --no-daemon :issuer-s6-acceptance-host:run --console=plain             > s6-host.log 2>&1 &
           echo $! > s6-host.pid
 
           for i in $(seq 1 90); do
@@ -143,4 +145,5 @@ jobs:
           if [[ -f s6-host.pid ]]; then
             kill "$(cat s6-host.pid)" >/dev/null 2>&1 || true
           fi
+          rm -f .s6-openbao-app-token
           docker rm -f liliya-openbao-s6 >/dev/null 2>&1 || true
