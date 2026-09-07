@@ -17,3 +17,4 @@ rootProject.name = "LiliyaLicensingService"
 include(":issuer-core")
 include(":issuer-testkit")
 include(":issuer-postgres")
+include(":issuer-openbao-transit")

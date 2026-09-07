@@ -33,6 +33,10 @@ jobs:
       TEST_POSTGRES_URL: jdbc:postgresql://localhost:5432/liliya_licensing_test
       TEST_POSTGRES_USER: liliya
       TEST_POSTGRES_PASSWORD: liliya-test
+      TEST_OPENBAO_ADDR: http://127.0.0.1:18200
+      TEST_OPENBAO_TOKEN: ci-openbao-only-token
+      TEST_OPENBAO_KEY: license-signing-ci
+      TEST_OPENBAO_KEY_VERSION: "2"
 
     steps:
       - uses: actions/checkout@v4
@@ -43,13 +47,33 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.6.1"
+      - name: Start OpenBao Transit integration fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d             --name liliya-openbao-ci             -p 18200:8200             openbao/openbao:2.6.2             server -dev             -dev-listen-address=0.0.0.0:8200             -dev-root-token-id="$TEST_OPENBAO_TOKEN"
+
+          for i in $(seq 1 60); do
+            if curl -fsS "$TEST_OPENBAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS "$TEST_OPENBAO_ADDR/v1/sys/health" >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $TEST_OPENBAO_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"transit"}'             "$TEST_OPENBAO_ADDR/v1/sys/mounts/transit"             >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $TEST_OPENBAO_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'             "$TEST_OPENBAO_ADDR/v1/transit/keys/$TEST_OPENBAO_KEY"             >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $TEST_OPENBAO_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{}'             "$TEST_OPENBAO_ADDR/v1/transit/keys/$TEST_OPENBAO_KEY/rotate"             >/dev/null
+
       - name: Test
         run: gradle --no-daemon clean check
       - name: Architecture guard
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts' issuer-core issuer-testkit issuer-postgres; then
+          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts'             issuer-core issuer-testkit issuer-postgres issuer-openbao-transit; then
             echo "Forbidden client/runtime dependency found"
             exit 1
           fi
