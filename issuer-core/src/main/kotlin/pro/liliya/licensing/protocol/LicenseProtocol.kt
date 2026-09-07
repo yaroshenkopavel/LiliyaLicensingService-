@@ -46,6 +46,13 @@ data class LicenseServiceRequest(
             "enrollmentReference must not be blank"
         }
     }
+
+    override fun toString(): String =
+        "LicenseServiceRequest(protocolVersion=" + protocolVersion +
+            ",operation=" + operation +
+            ",productId=" + productId +
+            ",subjectReference=<redacted>,requestId=<redacted>," +
+            "enrollmentReference=<redacted>)"
 }
 
 sealed interface LicenseRequestValidationResult {
@@ -77,4 +84,17 @@ data class EntitlementDecision(
     val offlineLeaseUntil: Instant?,
     val revocationEpoch: Long,
     val replaySequence: Long?
-)
+) {
+    override fun toString(): String =
+        "EntitlementDecision(licenseId=" + licenseId +
+            ",subject=<redacted>,productId=" + productId +
+            ",featuresCount=" + features.size +
+            ",version=" + version +
+            ",signingKeyId=" + signingKeyId +
+            ",issuedAt=" + issuedAt +
+            ",notBefore=" + notBefore +
+            ",expiresAt=" + expiresAt +
+            ",offlineLeaseUntil=" + offlineLeaseUntil +
+            ",revocationEpoch=" + revocationEpoch +
+            ",replaySequence=" + replaySequence + ")"
+}

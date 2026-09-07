@@ -2,7 +2,10 @@ package pro.liliya.licensing.issuer
 
 import pro.liliya.licensing.signing.SignedLicenseEnvelope
 
-data class DecisionScope(val subject: String, val productId: String)
+data class DecisionScope(val subject: String, val productId: String) {
+    override fun toString(): String =
+        "DecisionScope(subject=<redacted>,productId=" + productId + ")"
+}
 
 data class DecisionState(
     val replaySequence: Long,
