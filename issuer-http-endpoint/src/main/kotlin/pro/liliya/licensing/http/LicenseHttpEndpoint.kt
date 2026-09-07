@@ -17,7 +17,12 @@ data class LicenseHttpRequest(
     val method: LicenseHttpMethod,
     val path: String,
     val body: ByteArray
-)
+) {
+    override fun toString(): String =
+        "LicenseHttpRequest(method=" + method +
+            ",path=" + path +
+            ",body=<redacted>)"
+}
 
 data class LicenseHttpResponse(
     val status: Int,
@@ -27,6 +32,11 @@ data class LicenseHttpResponse(
     init {
         require(status in 100..599) { "invalid HTTP status" }
     }
+
+    override fun toString(): String =
+        "LicenseHttpResponse(status=" + status +
+            ",contentType=" + contentType +
+            ",body=<redacted>)"
 }
 
 fun interface LicensingIssuerProcessor {

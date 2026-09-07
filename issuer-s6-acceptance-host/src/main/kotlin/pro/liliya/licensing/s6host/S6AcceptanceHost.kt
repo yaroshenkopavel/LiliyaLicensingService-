@@ -115,6 +115,36 @@ fun main() {
             output.write(response.body)
         }
     }
+    server.createContext("/v1/license/malformed-success") { exchange ->
+        exchange.requestBody.use { it.readBytes() }
+        val body = "PRIVATE-MALFORMED-SUCCESS-MARKER".encodeToByteArray()
+        exchange.responseHeaders.set("Content-Type", "application/json")
+        exchange.sendResponseHeaders(200, body.size.toLong())
+        exchange.responseBody.use { output ->
+            output.write(body)
+        }
+    }
+
+    server.createContext("/v1/license/redirect") { exchange ->
+        exchange.requestBody.use { it.readBytes() }
+        exchange.responseHeaders.set("Location", "/v1/license")
+        val body = "redirect acceptance endpoint".encodeToByteArray()
+        exchange.sendResponseHeaders(302, body.size.toLong())
+        exchange.responseBody.use { output ->
+            output.write(body)
+        }
+    }
+
+    server.createContext("/v1/license/server-secret") { exchange ->
+        exchange.requestBody.use { it.readBytes() }
+        val body = "PRIVATE-SERVER-SECRET-MARKER".encodeToByteArray()
+        exchange.responseHeaders.set("Content-Type", "text/plain")
+        exchange.sendResponseHeaders(503, body.size.toLong())
+        exchange.responseBody.use { output ->
+            output.write(body)
+        }
+    }
+
     server.createContext("/v1/license/slow") { exchange ->
         exchange.requestBody.use { it.readBytes() }
         try {
@@ -134,6 +164,7 @@ fun main() {
 
     println("LICENSING_S6_4_HOST_READY={\"port\":18300,\"realSlice5Coordinator\":true,\"externalOpenBaoSigner\":true}")
     println("LICENSING_S6_5_HOST_READY={\"refreshReject\":true,\"slowEndpoint\":true,\"concurrentSlowRequests\":true}")
+    println("LICENSING_S6_6_HOST_READY={\"malformedSuccess\":true,\"redirect\":true,\"serverSecret\":true,\"malformedRequestNoEcho\":true}")
     System.out.flush()
 
     Runtime.getRuntime().addShutdownHook(
