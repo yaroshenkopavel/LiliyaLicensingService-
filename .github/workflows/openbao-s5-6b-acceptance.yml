@@ -3,6 +3,7 @@ name: OpenBao S5.6B Acceptance
 on:
   push:
     branches:
+      - main
       - "licensing/s5-6b-openbao-transit-v0.1"
   pull_request:
     paths:
