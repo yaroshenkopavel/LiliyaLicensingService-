@@ -43,6 +43,7 @@ class ProductionHttpsListenerContractTest {
             handler = LicenseHttpsHandler {
                 LicenseHttpResponse(503, null, byteArrayOf())
             },
+            readiness = { true },
             sslContextProvider = { throw IllegalStateException("TLS unavailable") }
         )
 
@@ -66,6 +67,7 @@ class ProductionHttpsListenerContractTest {
             handler = LicenseHttpsHandler {
                 LicenseHttpResponse(503, null, byteArrayOf())
             },
+            readiness = { true },
             sslContextProvider = { SSLContext.getDefault() }
         )
 
