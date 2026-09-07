@@ -14,6 +14,7 @@ dependencies {
     testImplementation(project(":issuer-core"))
     testImplementation(project(":issuer-testkit"))
     testImplementation(project(":issuer-openbao-transit"))
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
 }
