@@ -38,6 +38,19 @@ data class CanonicalLicenseEntitlement(
             "license offline lease must not exceed license expiry"
         }
     }
+
+    override fun toString(): String =
+        "CanonicalLicenseEntitlement(id=" + id +
+            ",subject=<redacted>,productId=" + productId +
+            ",featuresCount=" + features.size +
+            ",version=" + version +
+            ",signingKeyId=" + signingKeyId +
+            ",issuedAt=" + issuedAt +
+            ",notBefore=" + notBefore +
+            ",expiresAt=" + expiresAt +
+            ",offlineLeaseUntil=" + offlineLeaseUntil +
+            ",revocationEpoch=" + revocationEpoch +
+            ",replaySequence=" + replaySequence + ")"
 }
 
 sealed interface CanonicalEntitlementCompositionResult {
