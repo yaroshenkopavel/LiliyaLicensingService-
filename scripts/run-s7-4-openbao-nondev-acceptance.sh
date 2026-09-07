@@ -106,6 +106,19 @@ api_addr     = "https://127.0.0.1:8200"
 cluster_addr = "https://127.0.0.1:8201"
 EOF
 
+
+unseal_server() {
+  local status
+  status="$(
+    curl -sS --cacert "$WORK_DIR/tls/ca.crt"       -o "$WORK_DIR/unseal-response.json"       -w '%{http_code}'       -H "Content-Type: application/json"       -X POST       -d "$(jq -n --arg key "$UNSEAL_KEY" '{key:$key}')"       "$OPENBAO_ADDR/v1/sys/unseal"
+  )"
+  if [[ "$status" != "200" ]]; then
+    echo "OpenBao unseal failed with HTTP $status" >&2
+    cat "$WORK_DIR/unseal-response.json" >&2 || true
+    return 1
+  fi
+}
+
 start_server() {
   docker run -d     --name "$CONTAINER_NAME"     -p "$OPENBAO_PORT:8200"     -p "$OPENBAO_CLUSTER_PORT:8201"     -v "$DATA_VOLUME:/openbao/data"     -v "$AUDIT_VOLUME:/openbao/audit"     -v "$WORK_DIR/config:/openbao/config:ro"     -v "$WORK_DIR/tls:/openbao/tls:ro"     "$OPENBAO_IMAGE"     server -config=/openbao/config/openbao.hcl >/dev/null
 
@@ -140,10 +153,7 @@ if [[ -z "$ROOT_TOKEN" || -z "$UNSEAL_KEY" ]]; then
 fi
 
 echo "S7.4 stage: unseal initial server"
-printf '%s\n' "$UNSEAL_KEY" | docker exec -i \
-  -e BAO_ADDR=https://127.0.0.1:8200 \
-  -e BAO_CACERT=/openbao/tls/ca.crt \
-  "$CONTAINER_NAME" bao operator unseal >/dev/null
+unseal_server
 
 echo "S7.4 stage: enable Transit"
 curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X POST   -d '{"type":"transit"}'   "$OPENBAO_ADDR/v1/sys/mounts/transit" >/dev/null
@@ -191,10 +201,7 @@ docker rm -f "$CONTAINER_NAME" >/dev/null
 start_server
 
 echo "S7.4 stage: unseal restarted server"
-printf '%s\n' "$UNSEAL_KEY" | docker exec -i \
-  -e BAO_ADDR=https://127.0.0.1:8200 \
-  -e BAO_CACERT=/openbao/tls/ca.crt \
-  "$CONTAINER_NAME" bao operator unseal >/dev/null
+unseal_server
 
 KEY_META="$(
   curl -fsS --cacert "$WORK_DIR/tls/ca.crt"     -H "X-Vault-Token: $APP_TOKEN"     "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY"
