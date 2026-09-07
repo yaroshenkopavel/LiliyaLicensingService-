@@ -28,6 +28,8 @@ class SigningCompositionContractTest {
         val signer = LicenseEnvelopeSigner { payload, _ ->
             SigningResult.Signed(
                 SignedLicenseEnvelope(
+                    SigningEnvelopeSchemaVersion(1),
+                    SigningAlgorithm("TEST-ED25519"),
                     SigningKeyReference("different-key"),
                     payload,
                     byteArrayOf(1)
@@ -46,6 +48,8 @@ class SigningCompositionContractTest {
         val signer = LicenseEnvelopeSigner { _, key ->
             SigningResult.Signed(
                 SignedLicenseEnvelope(
+                    SigningEnvelopeSchemaVersion(1),
+                    SigningAlgorithm("TEST-ED25519"),
                     key,
                     "different-payload".encodeToByteArray(),
                     byteArrayOf(1)
