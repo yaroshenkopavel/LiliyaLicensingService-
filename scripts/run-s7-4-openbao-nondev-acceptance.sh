@@ -134,6 +134,21 @@ unseal_server() {
   fi
 }
 
+wait_for_active_server() {
+  local code
+  for _ in $(seq 1 60); do
+    code="$(curl -sS --cacert "$WORK_DIR/tls/ca.crt" -o /dev/null -w '%{http_code}' \
+      "$OPENBAO_ADDR/v1/sys/health" || true)"
+    if [[ "$code" == "200" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "OpenBao did not become active after unseal" >&2
+  docker logs "$CONTAINER_NAME" >&2 || true
+  return 1
+}
+
 start_server() {
   docker run -d     --name "$CONTAINER_NAME"     -p "$OPENBAO_PORT:8200"     -p "$OPENBAO_CLUSTER_PORT:8201"     -v "$DATA_VOLUME:/openbao/data"     -v "$AUDIT_VOLUME:/openbao/audit"     -v "$WORK_DIR/config:/openbao/config:ro"     -v "$WORK_DIR/tls:/openbao/tls:ro"     "$OPENBAO_IMAGE"     server -config=/openbao/config/openbao.hcl >/dev/null
 
@@ -169,6 +184,7 @@ fi
 
 echo "S7.4 stage: unseal initial server"
 unseal_server
+wait_for_active_server
 
 echo "S7.4 stage: enable Transit"
 curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X POST   -d '{"type":"transit"}'   "$OPENBAO_ADDR/v1/sys/mounts/transit" >/dev/null
@@ -220,6 +236,7 @@ start_server
 
 echo "S7.4 stage: unseal restarted server"
 unseal_server
+wait_for_active_server
 
 KEY_META="$(
   curl -fsS --cacert "$WORK_DIR/tls/ca.crt"     -H "X-Vault-Token: $APP_TOKEN"     "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY"
