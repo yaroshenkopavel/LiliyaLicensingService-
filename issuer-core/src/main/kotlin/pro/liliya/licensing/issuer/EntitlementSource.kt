@@ -16,7 +16,19 @@ data class EntitlementSourceRecord(
     val expiresAt: Instant?,
     val offlineLeaseUntil: Instant?,
     val revocationEpoch: Long
-)
+) {
+    override fun toString(): String =
+        "EntitlementSourceRecord(licenseId=" + licenseId +
+            ",subject=<redacted>,productId=" + productId +
+            ",featuresCount=" + features.size +
+            ",version=" + version +
+            ",signingKeyId=" + signingKeyId +
+            ",issuedAt=" + issuedAt +
+            ",notBefore=" + notBefore +
+            ",expiresAt=" + expiresAt +
+            ",offlineLeaseUntil=" + offlineLeaseUntil +
+            ",revocationEpoch=" + revocationEpoch + ")"
+}
 
 sealed interface EntitlementSourceResult {
     data class Eligible(val record: EntitlementSourceRecord) : EntitlementSourceResult
