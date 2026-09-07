@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":issuer-request-auth"))
     implementation(project(":issuer-https-listener"))
     implementation("org.postgresql:postgresql:42.7.7")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
