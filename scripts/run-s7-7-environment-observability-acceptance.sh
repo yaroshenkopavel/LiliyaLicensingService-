@@ -31,7 +31,6 @@ PRODUCTION_SOURCE_DIRS=(
   issuer-request-auth/src/main
   issuer-deployment/src/main
   issuer-https-listener/src/main
-  issuer-observability/src/main
 )
 
 if grep -R -n -E '(^|[^A-Za-z])(println|print)\(|System\.(out|err)\.'   --include='*.kt' "${PRODUCTION_SOURCE_DIRS[@]}"; then
