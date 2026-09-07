@@ -1,0 +1,43 @@
+name: S7.5 PostgreSQL Backup Restore Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-5-postgres-backup-restore-v0.1"
+  pull_request:
+    paths:
+      - "issuer-postgres/**"
+      - "scripts/run-s7-5-postgres-backup-restore-acceptance.sh"
+      - ".github/workflows/s7-5-postgres-backup-restore-acceptance.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-backup-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Run PostgreSQL 17 backup restore acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./scripts/run-s7-5-postgres-backup-restore-acceptance.sh 2>&1 | tee s7-5-postgres.log
+          grep -F 'LICENSING_S7_5_POSTGRES_EVIDENCE=' s7-5-postgres.log
+          grep -F '=== S7.5 POSTGRES BACKUP RESTORE ACCEPTANCE PASS ===' s7-5-postgres.log
