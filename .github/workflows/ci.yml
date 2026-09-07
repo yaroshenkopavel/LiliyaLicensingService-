@@ -73,11 +73,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts'             issuer-core issuer-testkit issuer-postgres issuer-openbao-transit issuer-transport-contract; then
+          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts'             issuer-core issuer-testkit issuer-postgres issuer-openbao-transit issuer-transport-contract issuer-http-endpoint; then
             echo "Forbidden client/runtime dependency found"
             exit 1
           fi
-          if grep -R -n -E '\b(Authority|ExecutionPermission|RuntimeAuthority)\b'             --include='*.kt' issuer-core/src/main issuer-transport-contract/src/main; then
+          if grep -R -n -E '\b(Authority|ExecutionPermission|RuntimeAuthority)\b'             --include='*.kt' issuer-core/src/main issuer-transport-contract/src/main issuer-http-endpoint/src/main; then
             echo "Forbidden Authority/Execution semantic found in backend protocol/transport"
             exit 1
           fi
