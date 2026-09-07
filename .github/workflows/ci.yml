@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts' issuer-core issuer-testkit issuer-postgres; then
+          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts' issuer-core issuer-testkit issuer-postgres issuer-gcp-kms; then
             echo "Forbidden client/runtime dependency found"
             exit 1
           fi
