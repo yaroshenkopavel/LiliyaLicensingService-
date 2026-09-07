@@ -3,6 +3,7 @@ name: S6.5 REFRESH Failure Acceptance
 on:
   push:
     branches:
+      - main
       - "licensing/s6-5-refresh-failures-v0.1"
   pull_request:
     paths:
