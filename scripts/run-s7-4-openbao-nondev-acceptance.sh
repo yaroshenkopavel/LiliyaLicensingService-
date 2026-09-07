@@ -128,10 +128,10 @@ echo "Mode: non-dev / integrated Raft / TLS"
 start_server
 
 INIT_RESPONSE="$(
-  curl -fsS --cacert "$WORK_DIR/tls/ca.crt"     -H "Content-Type: application/json"     -X PUT     -d '{"secret_shares":1,"secret_threshold":1}'     "$OPENBAO_ADDR/v1/sys/init"
+  docker exec     -e BAO_ADDR=https://127.0.0.1:8200     -e BAO_CACERT=/openbao/tls/ca.crt     "$CONTAINER_NAME"     bao operator init -key-shares=1 -key-threshold=1 -format=json
 )"
 ROOT_TOKEN="$(printf '%s' "$INIT_RESPONSE" | jq -r '.root_token // empty')"
-UNSEAL_KEY="$(printf '%s' "$INIT_RESPONSE" | jq -r '.keys_base64[0] // empty')"
+UNSEAL_KEY="$(printf '%s' "$INIT_RESPONSE" | jq -r '.unseal_keys_b64[0] // .keys_base64[0] // empty')"
 unset INIT_RESPONSE
 
 if [[ -z "$ROOT_TOKEN" || -z "$UNSEAL_KEY" ]]; then
