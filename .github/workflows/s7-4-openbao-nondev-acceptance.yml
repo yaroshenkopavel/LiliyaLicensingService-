@@ -28,6 +28,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./scripts/run-s7-4-openbao-nondev-acceptance.sh 2>&1 | tee s7-4-openbao.log
+          bash ./scripts/run-s7-4-openbao-nondev-acceptance.sh 2>&1 | tee s7-4-openbao.log
           grep -F 'LICENSING_S7_4_OPENBAO_EVIDENCE=' s7-4-openbao.log
           grep -F '=== S7.4 NON-DEV OPENBAO ACCEPTANCE PASS ===' s7-4-openbao.log
