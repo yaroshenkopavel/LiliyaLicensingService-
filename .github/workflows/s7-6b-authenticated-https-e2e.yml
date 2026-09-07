@@ -1,0 +1,226 @@
+name: S7.6b Authenticated HTTPS Cross-Repo Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-6b-authenticated-https-e2e-v0.1"
+  pull_request:
+    paths:
+      - "issuer-https-listener/**"
+      - "acceptance/s7-6b/**"
+      - ".github/workflows/s7-6b-authenticated-https-e2e.yml"
+      - "issuer-http-endpoint/**"
+      - "issuer-request-auth/**"
+      - "issuer-openbao-transit/**"
+      - "issuer-core/**"
+      - "settings.gradle.kts"
+
+permissions:
+  contents: read
+
+jobs:
+  authenticated-https-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Checkout frozen LiliyaCore
+        uses: actions/checkout@v4
+        with:
+          repository: yaroshenkopavel/LiliyaCore-
+          ref: 335fb9dd2f11c4c77983b89f28ebe30d95cb23dd
+          path: liliya-core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Set up Android SDK for frozen LiliyaCore
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Prepare OpenBao signing fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OPENBAO_ADDR="http://127.0.0.1:18200"
+          OPENBAO_ROOT_TOKEN="s76-root-fixture"
+          OPENBAO_KEY="license-signing-s76"
+
+          docker run -d             --name liliya-openbao-s76             -p 18200:8200             openbao/openbao:2.6.2             server -dev             -dev-listen-address=0.0.0.0:8200             -dev-root-token-id="$OPENBAO_ROOT_TOKEN" >/dev/null
+
+          for i in $(seq 1 60); do
+            if curl -fsS "$OPENBAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS "$OPENBAO_ADDR/v1/sys/health" >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"transit"}'             "$OPENBAO_ADDR/v1/sys/mounts/transit" >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'             "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY" >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{}'             "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY/rotate" >/dev/null
+
+          POLICY_CONTENT='path "transit/keys/'"$OPENBAO_KEY"'" { capabilities = ["read"] }
+          path "transit/sign/'"$OPENBAO_KEY"'/sha2-256" { capabilities = ["update"] }'
+          POLICY_JSON="$(jq -n --arg policy "$POLICY_CONTENT" '{policy:$policy}')"
+
+          curl -fsS             -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"             -H "Content-Type: application/json"             -X PUT             -d "$POLICY_JSON"             "$OPENBAO_ADDR/v1/sys/policies/acl/liliya-s76-signer" >/dev/null
+
+          TOKEN_RESPONSE="$(
+            curl -fsS               -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"               -H "Content-Type: application/json"               -X POST               -d '{"policies":["liliya-s76-signer"],"ttl":"1h","renewable":false,"no_default_policy":true}'               "$OPENBAO_ADDR/v1/auth/token/create"
+          )"
+          APP_TOKEN="$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.auth.client_token // empty')"
+          test -n "$APP_TOKEN"
+          echo "::add-mask::$APP_TOKEN"
+          printf '%s' "$APP_TOKEN" > .s76-openbao-token
+          chmod 600 .s76-openbao-token
+
+          KEY_META="$(
+            curl -fsS               -H "X-Vault-Token: $APP_TOKEN"               "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY"
+          )"
+          printf '%s' "$KEY_META" | jq -r '.data.keys["2"].public_key' > s76-public-key.pem
+          openssl pkey -pubin -in s76-public-key.pem -outform DER -out s76-public-key.der
+          test -s s76-public-key.der
+
+          {
+            echo "S7_6_OPENBAO_ADDR=$OPENBAO_ADDR"
+            echo "S7_6_OPENBAO_KEY=$OPENBAO_KEY"
+            echo "S7_6_OPENBAO_KEY_VERSION=2"
+          } >> "$GITHUB_ENV"
+
+      - name: Generate external TLS and request-auth material
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p .s76-tls
+          chmod 700 .s76-tls
+
+          TLS_PASSWORD="$(openssl rand -hex 24)"
+          AUTH_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$TLS_PASSWORD"
+          echo "::add-mask::$AUTH_SECRET"
+          printf '%s' "$TLS_PASSWORD" > .s76-tls-password
+          printf '%s' "$AUTH_SECRET" > .s76-auth-secret
+          chmod 600 .s76-tls-password .s76-auth-secret
+
+          cat > .s76-tls/ca.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+          [dn]
+          CN = Liliya S7.6b Acceptance CA
+          [v3_ca]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,keyCertSign,cRLSign
+          subjectKeyIdentifier = hash
+          EOF
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1             -keyout .s76-tls/ca.key             -out .s76-tls/ca.crt             -config .s76-tls/ca.cnf >/dev/null 2>&1
+
+          cat > .s76-tls/server.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          req_extensions = req_ext
+          prompt = no
+          [dn]
+          CN = localhost
+          [req_ext]
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = localhost
+          IP.1 = 127.0.0.1
+          EOF
+
+          openssl req -newkey rsa:2048 -nodes             -keyout .s76-tls/server.key             -out .s76-tls/server.csr             -config .s76-tls/server.cnf >/dev/null 2>&1
+
+          cat > .s76-tls/server-ext.cnf <<'EOF'
+          basicConstraints=CA:FALSE
+          keyUsage=digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          EOF
+
+          openssl x509 -req -days 1             -in .s76-tls/server.csr             -CA .s76-tls/ca.crt             -CAkey .s76-tls/ca.key             -CAcreateserial             -out .s76-tls/server.crt             -extfile .s76-tls/server-ext.cnf >/dev/null 2>&1
+
+          openssl pkcs12 -export             -inkey .s76-tls/server.key             -in .s76-tls/server.crt             -certfile .s76-tls/ca.crt             -name liliya-s76             -passout "pass:$TLS_PASSWORD"             -out .s76-tls/server.p12 >/dev/null 2>&1
+
+          keytool -importcert -noprompt             -alias liliya-s76-ca             -file .s76-tls/ca.crt             -keystore .s76-tls/truststore.p12             -storetype PKCS12             -storepass "$TLS_PASSWORD" >/dev/null
+
+          chmod 600 .s76-tls/ca.key .s76-tls/server.key .s76-tls/server.p12 .s76-tls/truststore.p12
+
+      - name: Start authenticated production HTTPS listener
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          S7_6_OPENBAO_TOKEN="$(cat .s76-openbao-token)"           S7_6_REQUEST_AUTH_SECRET="$(cat .s76-auth-secret)"           S7_6_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s76-tls/server.p12"           S7_6_TLS_KEYSTORE_PASSWORD="$(cat .s76-tls-password)"           S7_6_TLS_PORT=18446             gradle --no-daemon :issuer-https-listener:runS76AuthenticatedHttpsAcceptanceHost               --console=plain > s76-host.log 2>&1 &
+          echo $! > s76-host.pid
+
+          for i in $(seq 1 90); do
+            if grep -q 'LICENSING_S7_6B_HOST_READY=' s76-host.log 2>/dev/null; then
+              break
+            fi
+            if ! kill -0 "$(cat s76-host.pid)" 2>/dev/null; then
+              cat s76-host.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          grep -F 'LICENSING_S7_6B_HOST_READY=' s76-host.log
+
+      - name: Run frozen Core authenticated HTTPS ISSUE REFRESH acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CORE_TEST_DIR="liliya-core/license-transport-client/src/test/kotlin/pro/liliya/core/licensetransport"
+          cp acceptance/s7-6b/LicenseS76AuthenticatedHttpsAcceptanceTest.kt "$CORE_TEST_DIR/"
+
+          TLS_PASSWORD="$(cat .s76-tls-password)"
+          AUTH_SECRET="$(cat .s76-auth-secret)"
+          echo "::add-mask::$TLS_PASSWORD"
+          echo "::add-mask::$AUTH_SECRET"
+
+          export JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s76-tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$TLS_PASSWORD -Djavax.net.ssl.trustStoreType=PKCS12"
+          export LIVE_S76_HTTPS_ENDPOINT="https://127.0.0.1:18446/v1/license"
+          export LIVE_S76_BEARER="$AUTH_SECRET"
+          export LIVE_S76_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/s76-public-key.der"
+          export LIVE_S76_EVIDENCE_PATH="$GITHUB_WORKSPACE/s76-evidence.txt"
+
+          gradle -p liliya-core             :license-transport-client:test             --tests "pro.liliya.core.licensetransport.LicenseS76AuthenticatedHttpsAcceptanceTest"             --console=plain             2>&1 | tee s76-e2e.log
+
+          test -s s76-evidence.txt
+          grep -F 'LICENSING_S7_6B_HTTPS_EVIDENCE=' s76-evidence.txt
+
+      - name: Final evidence and cleanup
+        if: always()
+        shell: bash
+        run: |
+          grep -F 'LICENSING_S7_6B_HOST_READY=' s76-host.log 2>/dev/null || true
+          grep -F 'LICENSING_S7_6B_HTTPS_EVIDENCE=' s76-evidence.txt 2>/dev/null || true
+
+          if [[ -f s76-host.pid ]]; then
+            kill "$(cat s76-host.pid)" >/dev/null 2>&1 || true
+          fi
+
+          rm -f .s76-openbao-token .s76-auth-secret .s76-tls-password
+          rm -rf .s76-tls
+          docker rm -f liliya-openbao-s76 >/dev/null 2>&1 || true
