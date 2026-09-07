@@ -15,7 +15,8 @@ enum class LicensingOperationalComponent {
     HTTPS,
     POSTGRESQL,
     OPENBAO_TRANSIT,
-    REQUEST_AUTHENTICATION
+    REQUEST_AUTHENTICATION,
+    ENTITLEMENT_SOURCE
 }
 
 enum class LicensingOperationalEventCode {
@@ -42,7 +43,11 @@ enum class LicensingOperationalDetailCode {
     OPENBAO_TOKEN,
     REQUEST_AUTH_IDENTITY_REFERENCE,
     REQUEST_AUTH_SECRET,
-    TLS_IDENTITY_REFERENCE
+    TLS_IDENTITY_REFERENCE,
+    TLS_KEYSTORE_PATH,
+    TLS_KEYSTORE_PASSWORD,
+    OPENBAO_KEY_NAME,
+    OPENBAO_KEY_VERSION
 }
 
 enum class LicensingOperationalReasonCode {
@@ -53,6 +58,7 @@ enum class LicensingOperationalReasonCode {
     OPENBAO_UNAVAILABLE,
     REQUEST_AUTHENTICATION_UNAVAILABLE,
     LISTENER_UNAVAILABLE,
+    ENTITLEMENT_SOURCE_UNAVAILABLE,
     INTERNAL_FAILURE
 }
 

@@ -1,0 +1,230 @@
+name: S7.9A Production Entrypoint Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-9a-production-composition-v0.1"
+  pull_request:
+    paths:
+      - "issuer-deployment/**"
+      - "issuer-runtime/**"
+      - "issuer-https-listener/**"
+      - "issuer-postgres/**"
+      - "issuer-openbao-transit/**"
+      - "issuer-request-auth/**"
+      - "issuer-observability/**"
+      - ".github/workflows/s7-9a-production-entrypoint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  production-entrypoint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: s79a-admin-fixture
+          POSTGRES_DB: liliya_s79a
+        ports:
+          - 18590:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d liliya_s79a"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Build real production distribution and acceptance provider
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon             :issuer-deployment:installDist             :issuer-deployment:testClasses             --console=plain
+
+      - name: Prepare OpenBao signing fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT_TOKEN="s79a-root-fixture"
+          docker run -d             --name liliya-openbao-s79a             -p 18591:8200             openbao/openbao:2.6.2             server -dev             -dev-listen-address=0.0.0.0:8200             -dev-root-token-id="$ROOT_TOKEN" >/dev/null
+
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18591/v1/sys/health >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18591/v1/sys/health >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"transit"}'             http://127.0.0.1:18591/v1/sys/mounts/transit >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'             http://127.0.0.1:18591/v1/transit/keys/license-signing-s79a >/dev/null
+
+          POLICY='path "transit/keys/license-signing-s79a" { capabilities = ["read"] }
+          path "transit/sign/license-signing-s79a/sha2-256" { capabilities = ["update"] }'
+
+          curl -fsS             -H "X-Vault-Token: $ROOT_TOKEN"             -H "Content-Type: application/json"             -X PUT             -d "$(jq -n --arg policy "$POLICY" '{policy:$policy}')"             http://127.0.0.1:18591/v1/sys/policies/acl/liliya-s79a-signer >/dev/null
+
+          APP_TOKEN="$(
+            curl -fsS               -H "X-Vault-Token: $ROOT_TOKEN"               -H "Content-Type: application/json"               -X POST               -d '{"policies":["liliya-s79a-signer"],"ttl":"1h","renewable":false,"no_default_policy":true}'               http://127.0.0.1:18591/v1/auth/token/create |
+              jq -r '.auth.client_token'
+          )"
+          test -n "$APP_TOKEN"
+          echo "::add-mask::$APP_TOKEN"
+          printf '%s' "$APP_TOKEN" > .s79a-openbao-token
+          chmod 600 .s79a-openbao-token
+
+      - name: Prepare external HTTPS and auth material
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .s79a-tls
+          chmod 700 .s79a-tls
+
+          TLS_PASS="$(openssl rand -hex 24)"
+          AUTH_SECRET="$(openssl rand -hex 32)"
+          DB_RUNTIME_PASS="$(openssl rand -hex 24)"
+          echo "::add-mask::$TLS_PASS"
+          echo "::add-mask::$AUTH_SECRET"
+          echo "::add-mask::$DB_RUNTIME_PASS"
+          printf '%s' "$TLS_PASS" > .s79a-tls-pass
+          printf '%s' "$AUTH_SECRET" > .s79a-auth
+          printf '%s' "$DB_RUNTIME_PASS" > .s79a-db-runtime
+          chmod 600 .s79a-tls-pass .s79a-auth .s79a-db-runtime
+
+          cat > .s79a-tls/openssl.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3
+          prompt = no
+          [dn]
+          CN = localhost
+          [v3]
+          subjectAltName = DNS:localhost,IP:127.0.0.1
+          keyUsage = digitalSignature,keyEncipherment
+          extendedKeyUsage = serverAuth
+          basicConstraints = CA:FALSE
+          EOF
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1             -keyout .s79a-tls/server.key             -out .s79a-tls/server.crt             -config .s79a-tls/openssl.cnf >/dev/null 2>&1
+
+          openssl pkcs12 -export             -inkey .s79a-tls/server.key             -in .s79a-tls/server.crt             -name liliya-s79a             -passout "pass:$TLS_PASS"             -out .s79a-tls/server.p12 >/dev/null 2>&1
+
+      - name: Create least-privilege runtime DB role
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_PASS="$(cat .s79a-db-runtime)"
+          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "CREATE ROLE liliya_s79a_runtime LOGIN PASSWORD '$RUNTIME_PASS' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"             -c "GRANT CONNECT ON DATABASE liliya_s79a TO liliya_s79a_runtime" >/dev/null
+
+      - name: Prove incompatible or missing schema prevents READY
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          APP_TOKEN="$(cat .s79a-openbao-token)"
+          AUTH_SECRET="$(cat .s79a-auth)"
+          TLS_PASS="$(cat .s79a-tls-pass)"
+          RUNTIME_PASS="$(cat .s79a-db-runtime)"
+
+          set +e
+          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-not-ready.log 2>&1
+          STATUS=$?
+          set -e
+
+          test "$STATUS" -ne 0
+          grep -F '"code":"RUNTIME_NOT_READY"' s79a-not-ready.log
+          grep -F '"reason":"POSTGRESQL_UNAVAILABLE"' s79a-not-ready.log
+          ! grep -F "$RUNTIME_PASS" s79a-not-ready.log
+          ! grep -F "$AUTH_SECRET" s79a-not-ready.log
+          ! grep -F "$APP_TOKEN" s79a-not-ready.log
+
+      - name: Run schema migration through separate admin helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+
+          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD=s79a-admin-fixture             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt             | tee s79a-schema.log
+
+          grep -F 'LICENSING_S7_9A_SCHEMA_EVIDENCE=' s79a-schema.log
+
+          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79a_runtime" >/dev/null
+
+      - name: Start real production entrypoint and prove READY
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          APP_TOKEN="$(cat .s79a-openbao-token)"
+          AUTH_SECRET="$(cat .s79a-auth)"
+          TLS_PASS="$(cat .s79a-tls-pass)"
+          RUNTIME_PASS="$(cat .s79a-db-runtime)"
+
+          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-ready.log 2>&1 &
+          echo $! > .s79a-service-pid
+
+          for i in $(seq 1 60); do
+            if grep -F '"code":"RUNTIME_READY"' s79a-ready.log >/dev/null 2>&1; then
+              break
+            fi
+            if ! kill -0 "$(cat .s79a-service-pid)" >/dev/null 2>&1; then
+              cat s79a-ready.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          grep -F '"code":"RUNTIME_READY"' s79a-ready.log
+          curl -fsS --cacert .s79a-tls/server.crt             https://127.0.0.1:18592/health/ready |
+            grep -F '"status":"ready"'
+
+          STATUS="$(curl -sS --cacert .s79a-tls/server.crt             -o /dev/null -w '%{http_code}'             https://127.0.0.1:18592/v1/license)"
+          test "$STATUS" = "405"
+
+      - name: Prove shutdown lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          PID="$(cat .s79a-service-pid)"
+          kill -TERM "$PID"
+          for i in $(seq 1 30); do
+            if ! kill -0 "$PID" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          ! kill -0 "$PID" >/dev/null 2>&1
+
+          grep -F '"code":"RUNTIME_STOPPING"' s79a-ready.log
+          grep -F '"code":"RUNTIME_STOPPED"' s79a-ready.log
+
+          echo 'LICENSING_S7_9A_EVIDENCE={"realProductionMain":true,"externalEntitlementProvider":true,"schemaMigrationSeparated":true,"schemaMismatchNotReady":true,"postgresReadiness":true,"openBaoExactKeyReadiness":true,"requestAuthReadiness":true,"httpsReady":true,"runtimeOwnedReadiness":true,"shutdownLifecycle":true,"hiddenRetry":false}'
+          echo "=== S7.9A PRODUCTION ENTRYPOINT ACCEPTANCE PASS ==="
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .s79a-service-pid ]]; then
+            kill -TERM "$(cat .s79a-service-pid)" >/dev/null 2>&1 || true
+          fi
+          docker rm -f liliya-openbao-s79a >/dev/null 2>&1 || true
+          rm -rf .s79a-tls
+          rm -f .s79a-openbao-token .s79a-auth .s79a-tls-pass .s79a-db-runtime
