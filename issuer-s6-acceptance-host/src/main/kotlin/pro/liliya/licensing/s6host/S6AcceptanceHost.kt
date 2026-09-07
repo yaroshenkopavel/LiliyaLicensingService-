@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import pro.liliya.licensing.http.LicenseHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpMethod
 import pro.liliya.licensing.http.LicenseHttpRequest
@@ -15,6 +16,7 @@ import pro.liliya.licensing.openbao.OpenBaoTransitEndpoint
 import pro.liliya.licensing.openbao.OpenBaoTransitHttpClient
 import pro.liliya.licensing.openbao.OpenBaoTransitKeyBinding
 import pro.liliya.licensing.openbao.OpenBaoTransitLicenseEnvelopeSigner
+import pro.liliya.licensing.protocol.LicenseOperation
 import pro.liliya.licensing.protocol.LicenseProtocolVersion
 import pro.liliya.licensing.protocol.LicenseRequestValidator
 import pro.liliya.licensing.protocol.LicenseServiceFailure
@@ -46,7 +48,14 @@ fun main() {
     )
 
     val source = EntitlementSourcePort { request ->
-        if (request.productId != "liliya-pro") {
+        if (
+            request.operation == LicenseOperation.REFRESH &&
+            request.subjectReference == "s6-refresh-reject-subject"
+        ) {
+            EntitlementSourceResult.Ineligible(
+                LicenseServiceFailure.REFRESH_REJECTED
+            )
+        } else if (request.productId != "liliya-pro") {
             EntitlementSourceResult.Ineligible(
                 LicenseServiceFailure.PRODUCT_NOT_ELIGIBLE
             )
@@ -82,6 +91,8 @@ fun main() {
     )
 
     val server = HttpServer.create(InetSocketAddress("127.0.0.1", PORT), 0)
+    val executor = Executors.newCachedThreadPool()
+
     server.createContext("/v1/license") { exchange ->
         val method = if (exchange.requestMethod == "POST") {
             LicenseHttpMethod.POST
@@ -104,13 +115,33 @@ fun main() {
             output.write(response.body)
         }
     }
-    server.executor = null
+    server.createContext("/v1/license/slow") { exchange ->
+        exchange.requestBody.use { it.readBytes() }
+        try {
+            Thread.sleep(5_000)
+            val body = "slow acceptance endpoint".encodeToByteArray()
+            exchange.sendResponseHeaders(503, body.size.toLong())
+            exchange.responseBody.use { output ->
+                output.write(body)
+            }
+        } catch (_: Exception) {
+            runCatching { exchange.close() }
+        }
+    }
+
+    server.executor = executor
     server.start()
 
     println("LICENSING_S6_4_HOST_READY={\"port\":18300,\"realSlice5Coordinator\":true,\"externalOpenBaoSigner\":true}")
+    println("LICENSING_S6_5_HOST_READY={\"refreshReject\":true,\"slowEndpoint\":true,\"concurrentSlowRequests\":true}")
     System.out.flush()
 
-    Runtime.getRuntime().addShutdownHook(Thread { server.stop(0) })
+    Runtime.getRuntime().addShutdownHook(
+        Thread {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    )
     CountDownLatch(1).await()
 }
 
