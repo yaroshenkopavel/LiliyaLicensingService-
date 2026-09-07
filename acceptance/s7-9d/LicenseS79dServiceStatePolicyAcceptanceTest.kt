@@ -199,6 +199,73 @@ class LicenseS79dServiceStatePolicyAcceptanceTest {
         )
     }
 
+    @Test
+    fun backend_service_state_identity_profile_and_payload_tampering_fail_closed() {
+        requirePhase("negative-hardening")
+        installAcceptanceTrust()
+        val envelope = serviceStateEnvelope("s7-9d-state-hardening-001")
+
+        val unknownKey = LicenseServiceStateEnvelope(
+            protocolVersion = envelope.protocolVersion,
+            purpose = envelope.purpose,
+            profile = envelope.profile,
+            signingKeyId = LicenseKeyId("s7-9d-unknown-service-state-key"),
+            payload = envelope.payload,
+            proof = envelope.proof
+        )
+        val unknownKeyRejected =
+            assertIs<LicenseServiceStateAcceptanceResult.VerificationRejected>(
+                serviceStateAcceptance().verifyAndAccept(unknownKey)
+            )
+        assertEquals(
+            pro.liliya.core.license.LicenseServiceStateVerificationRejection.UNKNOWN_KEY_ID,
+            unknownKeyRejected.reason
+        )
+
+        val unsupportedProfile = LicenseServiceStateEnvelope(
+            protocolVersion = envelope.protocolVersion,
+            purpose = envelope.purpose,
+            profile = LicenseServiceEvidenceProfile("UNSUPPORTED-SERVICE-STATE-PROFILE"),
+            signingKeyId = envelope.signingKeyId,
+            payload = envelope.payload,
+            proof = envelope.proof
+        )
+        val profileRejected =
+            assertIs<LicenseServiceStateAcceptanceResult.VerificationRejected>(
+                serviceStateAcceptance().verifyAndAccept(unsupportedProfile)
+            )
+        assertEquals(
+            pro.liliya.core.license.LicenseServiceStateVerificationRejection.UNSUPPORTED_PROFILE,
+            profileRejected.reason
+        )
+
+        val payloadBytes = envelope.payload.copyBytes()
+        payloadBytes[payloadBytes.lastIndex] =
+            (payloadBytes.last().toInt() xor 1).toByte()
+        val tamperedPayload = LicenseServiceStateEnvelope(
+            protocolVersion = envelope.protocolVersion,
+            purpose = envelope.purpose,
+            profile = envelope.profile,
+            signingKeyId = envelope.signingKeyId,
+            payload = pro.liliya.core.license.LicenseServiceOpaquePayload.of(payloadBytes),
+            proof = envelope.proof
+        )
+        val payloadRejected =
+            assertIs<LicenseServiceStateAcceptanceResult.VerificationRejected>(
+                serviceStateAcceptance().verifyAndAccept(tamperedPayload)
+            )
+        assertEquals(
+            pro.liliya.core.license.LicenseServiceStateVerificationRejection.INVALID_PROOF,
+            payloadRejected.reason
+        )
+
+        writeEvidence(
+            "LICENSING_S7_9D_HARDENING_EVIDENCE=" +
+                "{\"unknownKeyRejected\":true,\"unsupportedProfileRejected\":true," +
+                "\"tamperedPayloadRejected\":true,\"acceptedStateCreated\":false}"
+        )
+    }
+
     private fun entitlementClient(): LicenseHttpTransportClient {
         val config = LicenseHttpTransportConfig(
             endpoint = URL(requiredEnv("LIVE_S79D_LICENSE_ENDPOINT")),
