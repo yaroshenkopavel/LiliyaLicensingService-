@@ -9,6 +9,7 @@ import pro.liliya.licensing.transport.LicenseWireJsonCodec
 import pro.liliya.licensing.transport.LicenseWireResponse
 
 enum class LicenseHttpMethod {
+    GET,
     POST
 }
 
