@@ -1,0 +1,141 @@
+name: S6.6 Privacy Negative Acceptance
+
+on:
+  push:
+    branches:
+      - "licensing/s6-6-privacy-negative-v0.1"
+  pull_request:
+    paths:
+      - "issuer-s6-acceptance-host/**"
+      - "issuer-http-endpoint/**"
+      - "issuer-transport-contract/**"
+      - ".github/workflows/s6-6-privacy-negative-e2e.yml"
+      - "settings.gradle.kts"
+
+permissions:
+  contents: read
+
+jobs:
+  privacy-negative-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Checkout S6.6 LiliyaCore consumer
+        uses: actions/checkout@v4
+        with:
+          repository: yaroshenkopavel/LiliyaCore-
+          ref: fbb68f958860d4cac1b97fcd466893f6d7d03b4f
+          path: liliya-core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Set up Android SDK for LiliyaCore configuration
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Start OpenBao Transit fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OPENBAO_ADDR="http://127.0.0.1:18200"
+          OPENBAO_ROOT_TOKEN="s6-openbao-root-fixture"
+          OPENBAO_KEY="license-signing-s6"
+
+          docker run -d             --name liliya-openbao-s6             -p 18200:8200             openbao/openbao:2.6.2             server -dev             -dev-listen-address=0.0.0.0:8200             -dev-root-token-id="$OPENBAO_ROOT_TOKEN"             >/dev/null
+
+          for i in $(seq 1 60); do
+            if curl -fsS "$OPENBAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS "$OPENBAO_ADDR/v1/sys/health" >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"transit"}'             "$OPENBAO_ADDR/v1/sys/mounts/transit"             >/dev/null
+
+          curl -fsS             -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'             "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY"             >/dev/null
+
+          POLICY_CONTENT='path "transit/keys/'"$OPENBAO_KEY"'" { capabilities = ["read"] }
+          path "transit/sign/'"$OPENBAO_KEY"'/sha2-256" { capabilities = ["update"] }'
+          POLICY_JSON="$(jq -n --arg policy "$POLICY_CONTENT" '{policy:$policy}')"
+
+          curl -fsS             -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"             -H "Content-Type: application/json"             -X PUT             -d "$POLICY_JSON"             "$OPENBAO_ADDR/v1/sys/policies/acl/liliya-s6-signer"             >/dev/null
+
+          APP_TOKEN_RESPONSE="$(
+            curl -fsS               -H "X-Vault-Token: $OPENBAO_ROOT_TOKEN"               -H "Content-Type: application/json"               -X POST               -d '{"policies":["liliya-s6-signer"],"ttl":"1h","renewable":false,"no_default_policy":true}'               "$OPENBAO_ADDR/v1/auth/token/create"
+          )"
+
+          APP_TOKEN="$(echo "$APP_TOKEN_RESPONSE" | jq -r '.auth.client_token // empty')"
+          test -n "$APP_TOKEN"
+          echo "::add-mask::$APP_TOKEN"
+          printf '%s' "$APP_TOKEN" > .s6-openbao-app-token
+          chmod 600 .s6-openbao-app-token
+
+          {
+            echo "S6_OPENBAO_ADDR=$OPENBAO_ADDR"
+            echo "S6_OPENBAO_KEY=$OPENBAO_KEY"
+            echo "S6_OPENBAO_KEY_VERSION=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Start S6.6 hostile acceptance host
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          S6_OPENBAO_TOKEN="$(cat .s6-openbao-app-token)"             gradle --no-daemon :issuer-s6-acceptance-host:run --console=plain             > s6-host.log 2>&1 &
+          echo $! > s6-host.pid
+
+          for i in $(seq 1 90); do
+            if grep -q 'LICENSING_S6_6_HOST_READY=' s6-host.log 2>/dev/null; then
+              break
+            fi
+            if ! kill -0 "$(cat s6-host.pid)" 2>/dev/null; then
+              cat s6-host.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          grep -F 'LICENSING_S6_6_HOST_READY=' s6-host.log
+
+      - name: Run real hostile transport acceptance
+        shell: bash
+        env:
+          LIVE_S6_NEGATIVE_BASE: http://127.0.0.1:18300
+          LIVE_S6_CONNECT_FAILURE_ENDPOINT: http://127.0.0.1:18399/v1/license
+          LIVE_S6_6_EVIDENCE_PATH: ${{ github.workspace }}/s6-6-evidence.txt
+        run: |
+          set -euo pipefail
+
+          gradle -p liliya-core             :license-transport-client:test             --tests "pro.liliya.core.licensetransport.LicenseS6PrivacyNegativeAcceptanceTest"             --console=plain             2>&1 | tee s6-6-e2e.log
+
+          test -s s6-6-evidence.txt
+          cat s6-6-evidence.txt
+          grep -F 'LICENSING_S6_6_EVIDENCE=' s6-6-evidence.txt
+
+      - name: Final evidence and cleanup
+        if: always()
+        shell: bash
+        run: |
+          grep -F 'LICENSING_S6_6_HOST_READY=' s6-host.log 2>/dev/null || true
+          grep -F 'LICENSING_S6_6_EVIDENCE=' s6-6-evidence.txt 2>/dev/null || true
+
+          if [[ -f s6-host.pid ]]; then
+            kill "$(cat s6-host.pid)" >/dev/null 2>&1 || true
+          fi
+          rm -f .s6-openbao-app-token
+          docker rm -f liliya-openbao-s6 >/dev/null 2>&1 || true
