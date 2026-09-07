@@ -153,6 +153,8 @@ class PostgreSqlDecisionTransactionPortIntegrationTest {
     }
 
     private fun envelope(sequence: Long) = SignedLicenseEnvelope(
+        pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion(1),
+        pro.liliya.licensing.signing.SigningAlgorithm("TEST-ED25519"),
         SigningKeyReference("test-key-s5-4"),
         "payload-$sequence".encodeToByteArray(),
         "signature-$sequence".encodeToByteArray()
