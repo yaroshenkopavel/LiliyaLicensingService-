@@ -139,18 +139,26 @@ if [[ -z "$ROOT_TOKEN" || -z "$UNSEAL_KEY" ]]; then
   exit 1
 fi
 
-curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "Content-Type: application/json"   -X POST   -d "$(jq -n --arg key "$UNSEAL_KEY" '{key:$key}')"   "$OPENBAO_ADDR/v1/sys/unseal" >/dev/null
+echo "S7.4 stage: unseal initial server"
+printf '%s\n' "$UNSEAL_KEY" | docker exec -i \
+  -e BAO_ADDR=https://127.0.0.1:8200 \
+  -e BAO_CACERT=/openbao/tls/ca.crt \
+  "$CONTAINER_NAME" bao operator unseal >/dev/null
 
+echo "S7.4 stage: enable Transit"
 curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X POST   -d '{"type":"transit"}'   "$OPENBAO_ADDR/v1/sys/mounts/transit" >/dev/null
 
+echo "S7.4 stage: create Transit key"
 curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X POST   -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'   "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY" >/dev/null
 
 POLICY_CONTENT='path "transit/keys/'"$OPENBAO_KEY"'" { capabilities = ["read"] }
 path "transit/sign/'"$OPENBAO_KEY"'/*" { capabilities = ["update"] }'
 POLICY_JSON="$(jq -n --arg policy "$POLICY_CONTENT" '{policy:$policy}')"
 
+echo "S7.4 stage: install runtime signing policy"
 curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X PUT   -d "$POLICY_JSON"   "$OPENBAO_ADDR/v1/sys/policies/acl/liliya-license-signer-s7-4" >/dev/null
 
+echo "S7.4 stage: create least-privilege runtime token"
 TOKEN_RESPONSE="$(
   curl -fsS --cacert "$WORK_DIR/tls/ca.crt"     -H "X-Vault-Token: $ROOT_TOKEN"     -H "Content-Type: application/json"     -X POST     -d '{"policies":["liliya-license-signer-s7-4"],"ttl":"1h","renewable":false,"no_default_policy":true}'     "$OPENBAO_ADDR/v1/auth/token/create"
 )"
@@ -158,6 +166,7 @@ APP_TOKEN="$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.auth.client_token // empty'
 unset TOKEN_RESPONSE
 [[ -n "$APP_TOKEN" ]] || { echo "Failed to create least-privilege runtime token" >&2; exit 1; }
 
+echo "S7.4 stage: enable audit device"
 curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X PUT   -d '{"type":"file","options":{"file_path":"/openbao/audit/openbao-audit.log"}}'   "$OPENBAO_ADDR/v1/sys/audit/file" >/dev/null
 
 ROTATE_STATUS="$(
@@ -177,10 +186,15 @@ SIGNATURE_BEFORE="$(
 
 docker exec "$CONTAINER_NAME" sh -c 'test -s /openbao/audit/openbao-audit.log'
 
+echo "S7.4 stage: restart OpenBao with persisted Raft state"
 docker rm -f "$CONTAINER_NAME" >/dev/null
 start_server
 
-curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "Content-Type: application/json"   -X POST   -d "$(jq -n --arg key "$UNSEAL_KEY" '{key:$key}')"   "$OPENBAO_ADDR/v1/sys/unseal" >/dev/null
+echo "S7.4 stage: unseal restarted server"
+printf '%s\n' "$UNSEAL_KEY" | docker exec -i \
+  -e BAO_ADDR=https://127.0.0.1:8200 \
+  -e BAO_CACERT=/openbao/tls/ca.crt \
+  "$CONTAINER_NAME" bao operator unseal >/dev/null
 
 KEY_META="$(
   curl -fsS --cacert "$WORK_DIR/tls/ca.crt"     -H "X-Vault-Token: $APP_TOKEN"     "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY"
