@@ -8,7 +8,10 @@ import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
+import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpEndpoint
+import pro.liliya.licensing.http.LicensingHttpRouter
+import pro.liliya.licensing.https.LicenseHttpsHandler
 import pro.liliya.licensing.https.ProductionHttpsConfig
 import pro.liliya.licensing.https.ProductionHttpsListener
 import pro.liliya.licensing.https.TlsPassword
@@ -21,6 +24,7 @@ import pro.liliya.licensing.openbao.OpenBaoTransitHttpClient
 import pro.liliya.licensing.openbao.OpenBaoTransitKeyBinding
 import pro.liliya.licensing.openbao.OpenBaoTransitLicenseEnvelopeSigner
 import pro.liliya.licensing.openbao.OpenBaoTransitProductionSigningProfile
+import pro.liliya.licensing.openbao.OpenBaoTransitServiceStateProofSigner
 import pro.liliya.licensing.postgres.PostgreSqlDecisionTransactionPort
 import pro.liliya.licensing.protocol.LicenseProtocolVersion
 import pro.liliya.licensing.protocol.LicenseRequestValidator
@@ -33,6 +37,8 @@ import pro.liliya.licensing.runtime.LicensingRuntimeStartResult
 import pro.liliya.licensing.runtime.LicensingRuntimeStopResult
 import pro.liliya.licensing.signing.LicenseSigningComposition
 import pro.liliya.licensing.signing.SigningKeyReference
+import pro.liliya.licensing.servicestate.ServiceStateEvidenceService
+import pro.liliya.licensing.servicestate.ServiceStateSigningKeyId
 
 /**
  * Fixed shared-secret transport authentication for the first production profile.
@@ -127,39 +133,74 @@ class PostgreSqlRuntimeReadinessDependency(
         "PostgreSqlRuntimeReadinessDependency(dataSource=<redacted>)"
 }
 
+data class OpenBaoRuntimeKeyRequirement(
+    val keyName: String,
+    val keyVersion: Int
+) {
+    init {
+        require(keyName.isNotBlank()) { "OpenBao readiness key name must not be blank" }
+        require(keyVersion > 0) { "OpenBao readiness key version must be positive" }
+    }
+
+    override fun toString(): String =
+        "OpenBaoRuntimeKeyRequirement(keyName=<redacted>,keyVersion=" + keyVersion + ")"
+}
+
 class OpenBaoRuntimeReadinessDependency(
     private val client: OpenBaoTransitClient,
-    private val keyName: String,
-    private val keyVersion: Int
+    requiredKeys: Collection<OpenBaoRuntimeKeyRequirement>
 ) : LicensingRuntimeDependency {
+    private val requiredKeys = requiredKeys.toList()
+
+    constructor(
+        client: OpenBaoTransitClient,
+        keyName: String,
+        keyVersion: Int
+    ) : this(
+        client = client,
+        requiredKeys = listOf(OpenBaoRuntimeKeyRequirement(keyName, keyVersion))
+    )
+
+    init {
+        require(this.requiredKeys.isNotEmpty()) {
+            "OpenBao readiness must require at least one exact key"
+        }
+        require(
+            this.requiredKeys.map { it.keyName to it.keyVersion }.toSet().size ==
+                this.requiredKeys.size
+        ) {
+            "OpenBao readiness exact key requirements must be unique"
+        }
+    }
+
     override val kind: LicensingRuntimeDependencyKind =
         LicensingRuntimeDependencyKind.OPENBAO_TRANSIT
 
-    override fun prepare(): LicensingRuntimeDependencyResult =
-        when (val result = client.describeKey(keyName)) {
-            is OpenBaoTransitDescribeResult.Available -> {
-                val description = result.description
-                if (
-                    description.type ==
-                        OpenBaoTransitProductionSigningProfile.transitKeyType &&
-                    description.supportsSigning &&
-                    keyVersion in description.availableVersions
-                ) {
-                    LicensingRuntimeDependencyResult.Ready
-                } else {
-                    failed()
-                }
+    override fun prepare(): LicensingRuntimeDependencyResult {
+        for (required in requiredKeys) {
+            val description = when (val result = client.describeKey(required.keyName)) {
+                is OpenBaoTransitDescribeResult.Available -> result.description
+                OpenBaoTransitDescribeResult.Unavailable,
+                OpenBaoTransitDescribeResult.Failed -> return failed()
             }
 
-            OpenBaoTransitDescribeResult.Unavailable,
-            OpenBaoTransitDescribeResult.Failed -> failed()
+            if (
+                description.type !=
+                    OpenBaoTransitProductionSigningProfile.transitKeyType ||
+                !description.supportsSigning ||
+                required.keyVersion !in description.availableVersions
+            ) {
+                return failed()
+            }
         }
+        return LicensingRuntimeDependencyResult.Ready
+    }
 
     override fun close() = Unit
 
     override fun toString(): String =
-        "OpenBaoRuntimeReadinessDependency(client=<redacted>," +
-            "keyName=<redacted>,keyVersion=" + keyVersion + ")"
+        "OpenBaoRuntimeReadinessDependency(client=<redacted>,requiredKeys=" +
+            requiredKeys.size + ")"
 
     private fun failed(): LicensingRuntimeDependencyResult.Failed =
         LicensingRuntimeDependencyResult.Failed(
@@ -267,6 +308,19 @@ class LicensingProductionService private constructor(
             val transactions = PostgreSqlDecisionTransactionPort(dataSource)
             val authentication = createAuthentication(deploymentConfig)
 
+            val serviceStateSigner = OpenBaoTransitServiceStateProofSigner(
+                client = openBaoClient,
+                keyName = runtimeMaterial.serviceStateOpenBaoKeyName,
+                keyVersion = runtimeMaterial.serviceStateOpenBaoKeyVersion
+            )
+            val serviceStateService = ServiceStateEvidenceService(
+                states = transactions,
+                signer = serviceStateSigner,
+                signingKeyId = ServiceStateSigningKeyId(
+                    runtimeMaterial.serviceStateOpenBaoKeyReference
+                )
+            )
+
             val endpoint = AuthenticatedLicenseHttpEndpoint(
                 delegate = LicenseHttpEndpoint(
                     LicensingIssuerCoordinator(
@@ -279,6 +333,14 @@ class LicensingProductionService private constructor(
                     )
                 ),
                 authentication = authentication
+            )
+            val serviceStateEndpoint = AuthenticatedServiceStateHttpEndpoint(
+                service = serviceStateService,
+                authentication = authentication
+            )
+            val router = LicensingHttpRouter(
+                entitlement = endpoint,
+                serviceState = serviceStateEndpoint
             )
 
             val tlsPassword = run {
@@ -298,7 +360,7 @@ class LicensingProductionService private constructor(
             val runtimeRef = AtomicReference<LicensingProductionRuntime?>()
             val listener = ProductionHttpsListener(
                 config = httpsConfig,
-                endpoint = endpoint,
+                handler = LicenseHttpsHandler(router::handle),
                 readiness = { runtimeRef.get()?.isReady() == true }
             )
 
@@ -307,8 +369,16 @@ class LicensingProductionService private constructor(
                     PostgreSqlRuntimeReadinessDependency(dataSource),
                     OpenBaoRuntimeReadinessDependency(
                         client = openBaoClient,
-                        keyName = runtimeMaterial.openBaoKeyName,
-                        keyVersion = runtimeMaterial.openBaoKeyVersion
+                        requiredKeys = listOf(
+                            OpenBaoRuntimeKeyRequirement(
+                                keyName = runtimeMaterial.openBaoKeyName,
+                                keyVersion = runtimeMaterial.openBaoKeyVersion
+                            ),
+                            OpenBaoRuntimeKeyRequirement(
+                                keyName = runtimeMaterial.serviceStateOpenBaoKeyName,
+                                keyVersion = runtimeMaterial.serviceStateOpenBaoKeyVersion
+                            )
+                        )
                     ),
                     RequestAuthenticationRuntimeReadinessDependency(authentication)
                 ),
