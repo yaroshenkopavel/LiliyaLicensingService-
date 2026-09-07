@@ -44,7 +44,9 @@ fun main() {
         password = requiredEnv("S7_8_POSTGRES_PASSWORD")
     }
     val transactions = PostgreSqlDecisionTransactionPort(dataSource)
-    transactions.initializeSchema()
+    if (System.getenv("S7_8_INITIALIZE_SCHEMA") == "true") {
+        transactions.initializeSchema()
+    }
 
     val signer = OpenBaoTransitLicenseEnvelopeSigner(
         bindings = listOf(
@@ -133,7 +135,8 @@ fun main() {
             println(
                 "LICENSING_S7_8_STAGING_HOST_READY={" +
                     "\"https\":true,\"requestAuth\":true," +
-                    "\"postgresAuthoritative\":true,\"nonDevOpenBao\":true," +
+                    "\"postgresAuthoritative\":true,\"schemaMigrationSeparated\":true," +
+                    "\"nonDevOpenBao\":true," +
                     "\"port\":" + port + "}"
             )
             System.out.flush()
