@@ -25,7 +25,14 @@ jobs:
       - name: Test
         run: gradle --no-daemon clean check
       - name: Architecture guard
+        shell: bash
         run: |
           set -euo pipefail
-          ! grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts' issuer-core issuer-testkit
-          ! grep -R -n -E '\b(Authority|ExecutionPermission|RuntimeAuthority)\b'             --include='*.kt' issuer-core/src/main || true
+          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts' issuer-core issuer-testkit; then
+            echo "Forbidden client/runtime dependency found"
+            exit 1
+          fi
+          if grep -R -n -E '\b(Authority|ExecutionPermission|RuntimeAuthority)\b'             --include='*.kt' issuer-core/src/main; then
+            echo "Forbidden Authority/Execution semantic found in backend protocol"
+            exit 1
+          fi
