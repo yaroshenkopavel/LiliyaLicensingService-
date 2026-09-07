@@ -199,10 +199,11 @@ jobs:
           echo "::add-mask::$TLS_PASSWORD"
           echo "::add-mask::$AUTH_SECRET"
 
-          export JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s76-tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$TLS_PASSWORD -Djavax.net.ssl.trustStoreType=PKCS12"
           export LIVE_S76_HTTPS_ENDPOINT="https://127.0.0.1:18446/v1/license"
           export LIVE_S76_BEARER="$AUTH_SECRET"
           export LIVE_S76_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/s76-public-key.der"
+          export LIVE_S76_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s76-tls/truststore.p12"
+          export LIVE_S76_TRUSTSTORE_PASSWORD="$TLS_PASSWORD"
           export LIVE_S76_EVIDENCE_PATH="$GITHUB_WORKSPACE/s76-evidence.txt"
 
           gradle -p liliya-core             :license-transport-client:test             --tests "pro.liliya.core.licensetransport.LicenseS76AuthenticatedHttpsAcceptanceTest"             --console=plain             2>&1 | tee s76-e2e.log
