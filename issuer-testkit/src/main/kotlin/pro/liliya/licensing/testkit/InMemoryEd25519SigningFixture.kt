@@ -30,6 +30,8 @@ class InMemoryEd25519SigningFixture private constructor(
             signer.update(canonicalPayload)
             SigningResult.Signed(
                 SignedLicenseEnvelope(
+                    schemaVersion = pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion(1),
+                    algorithm = pro.liliya.licensing.signing.SigningAlgorithm("TEST-ED25519"),
                     keyReference = keyReference,
                     canonicalPayload = canonicalPayload,
                     signature = signer.sign()

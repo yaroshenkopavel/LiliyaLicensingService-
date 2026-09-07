@@ -6,6 +6,18 @@ value class SigningKeyReference(val value: String) {
     override fun toString(): String = value
 }
 
+@JvmInline
+value class SigningEnvelopeSchemaVersion(val value: Long) {
+    init { require(value > 0L) { "signing envelope schema version must be positive" } }
+    override fun toString(): String = value.toString()
+}
+
+@JvmInline
+value class SigningAlgorithm(val value: String) {
+    init { require(value.isNotBlank()) { "signing algorithm must not be blank" } }
+    override fun toString(): String = value
+}
+
 enum class SigningFailure {
     KEY_UNAVAILABLE,
     KEY_RETIRED,
@@ -14,6 +26,8 @@ enum class SigningFailure {
 }
 
 class SignedLicenseEnvelope(
+    val schemaVersion: SigningEnvelopeSchemaVersion,
+    val algorithm: SigningAlgorithm,
     val keyReference: SigningKeyReference,
     canonicalPayload: ByteArray,
     signature: ByteArray
@@ -31,7 +45,9 @@ class SignedLicenseEnvelope(
     fun copySignature(): ByteArray = signatureBytes.copyOf()
 
     override fun toString(): String =
-        "SignedLicenseEnvelope(keyReference=" + keyReference +
+        "SignedLicenseEnvelope(schemaVersion=" + schemaVersion +
+            ",algorithm=" + algorithm +
+            ",keyReference=" + keyReference +
             ",payloadBytes=" + payloadBytes.size +
             ",signatureBytes=" + signatureBytes.size + ")"
 }

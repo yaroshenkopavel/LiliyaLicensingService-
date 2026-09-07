@@ -38,6 +38,8 @@ class PostgreSqlDecisionTransactionPort(
                         product_id TEXT NOT NULL,
                         replay_sequence BIGINT NOT NULL CHECK (replay_sequence >= 0),
                         revocation_epoch BIGINT NOT NULL CHECK (revocation_epoch >= 0),
+                        envelope_schema_version BIGINT NOT NULL CHECK (envelope_schema_version > 0),
+                        algorithm TEXT NOT NULL CHECK (length(algorithm) > 0),
                         signing_key_reference TEXT NOT NULL CHECK (length(signing_key_reference) > 0),
                         canonical_payload BYTEA NOT NULL CHECK (octet_length(canonical_payload) > 0),
                         signature BYTEA NOT NULL CHECK (octet_length(signature) > 0),
@@ -142,8 +144,8 @@ class PostgreSqlDecisionTransactionPort(
         val suffix = if (forUpdate) " FOR UPDATE" else ""
         connection.prepareStatement(
             """
-            SELECT replay_sequence, revocation_epoch, signing_key_reference,
-                   canonical_payload, signature
+            SELECT replay_sequence, revocation_epoch, envelope_schema_version, algorithm,
+                   signing_key_reference, canonical_payload, signature
             FROM licensing_decision_state
             WHERE subject = ? AND product_id = ?$suffix
             """.trimIndent()
@@ -155,6 +157,8 @@ class PostgreSqlDecisionTransactionPort(
 
                 val replay = result.getLong("replay_sequence")
                 val revocation = result.getLong("revocation_epoch")
+                val schemaVersion = result.getLong("envelope_schema_version")
+                val algorithm = result.getString("algorithm")
                 val keyReference = result.getString("signing_key_reference")
                 val payload = result.getBytes("canonical_payload")
                 val signature = result.getBytes("signature")
@@ -162,6 +166,8 @@ class PostgreSqlDecisionTransactionPort(
                 if (
                     replay < 0L ||
                     revocation < 0L ||
+                    schemaVersion <= 0L ||
+                    algorithm.isNullOrBlank() ||
                     keyReference.isNullOrBlank() ||
                     payload == null || payload.isEmpty() ||
                     signature == null || signature.isEmpty()
@@ -173,6 +179,8 @@ class PostgreSqlDecisionTransactionPort(
                     scope = scope,
                     state = DecisionState(replay, revocation),
                     envelope = SignedLicenseEnvelope(
+                        pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion(schemaVersion),
+                        pro.liliya.licensing.signing.SigningAlgorithm(algorithm),
                         SigningKeyReference(keyReference),
                         payload,
                         signature
@@ -191,8 +199,9 @@ class PostgreSqlDecisionTransactionPort(
             """
             INSERT INTO licensing_decision_state(
                 subject, product_id, replay_sequence, revocation_epoch,
-                signing_key_reference, canonical_payload, signature
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                envelope_schema_version, algorithm, signing_key_reference,
+                canonical_payload, signature
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (subject, product_id) DO NOTHING
             """.trimIndent()
         ).use { statement ->
@@ -211,6 +220,8 @@ class PostgreSqlDecisionTransactionPort(
             UPDATE licensing_decision_state
             SET replay_sequence = ?,
                 revocation_epoch = ?,
+                envelope_schema_version = ?,
+                algorithm = ?,
                 signing_key_reference = ?,
                 canonical_payload = ?,
                 signature = ?
@@ -222,13 +233,15 @@ class PostgreSqlDecisionTransactionPort(
         ).use { statement ->
             statement.setLong(1, candidate.nextState.replaySequence)
             statement.setLong(2, candidate.nextState.revocationEpoch)
-            statement.setString(3, candidate.envelope.keyReference.value)
-            statement.setBytes(4, candidate.envelope.copyCanonicalPayload())
-            statement.setBytes(5, candidate.envelope.copySignature())
-            statement.setString(6, scope.subject)
-            statement.setString(7, scope.productId)
-            statement.setLong(8, current.replaySequence)
-            statement.setLong(9, current.revocationEpoch)
+            statement.setLong(3, candidate.envelope.schemaVersion.value)
+            statement.setString(4, candidate.envelope.algorithm.value)
+            statement.setString(5, candidate.envelope.keyReference.value)
+            statement.setBytes(6, candidate.envelope.copyCanonicalPayload())
+            statement.setBytes(7, candidate.envelope.copySignature())
+            statement.setString(8, scope.subject)
+            statement.setString(9, scope.productId)
+            statement.setLong(10, current.replaySequence)
+            statement.setLong(11, current.revocationEpoch)
             statement.executeUpdate() == 1
         }
 
@@ -241,9 +254,11 @@ class PostgreSqlDecisionTransactionPort(
         statement.setString(2, scope.productId)
         statement.setLong(3, candidate.nextState.replaySequence)
         statement.setLong(4, candidate.nextState.revocationEpoch)
-        statement.setString(5, candidate.envelope.keyReference.value)
-        statement.setBytes(6, candidate.envelope.copyCanonicalPayload())
-        statement.setBytes(7, candidate.envelope.copySignature())
+        statement.setLong(5, candidate.envelope.schemaVersion.value)
+        statement.setString(6, candidate.envelope.algorithm.value)
+        statement.setString(7, candidate.envelope.keyReference.value)
+        statement.setBytes(8, candidate.envelope.copyCanonicalPayload())
+        statement.setBytes(9, candidate.envelope.copySignature())
     }
 
     private fun isMonotonic(current: DecisionState?, next: DecisionState): Boolean =
