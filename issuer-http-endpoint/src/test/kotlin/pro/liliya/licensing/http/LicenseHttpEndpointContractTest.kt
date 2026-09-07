@@ -172,6 +172,29 @@ class LicenseHttpEndpointContractTest {
     }
 
     @Test
+    fun wrong_method_invokes_processor_zero_times() {
+        var calls = 0
+        val endpoint = LicenseHttpEndpoint(
+            LicensingIssuerProcessor {
+                calls++
+                error("must not be called")
+            }
+        )
+
+        val response = endpoint.handle(
+            LicenseHttpRequest(
+                method = LicenseHttpMethod.GET,
+                path = LicenseHttpEndpoint.PATH,
+                body = byteArrayOf()
+            )
+        )
+
+        assertEquals(405, response.status)
+        assertEquals(0, calls)
+        assertTrue(response.body.isEmpty())
+    }
+
+    @Test
     fun wrong_route_invokes_processor_zero_times() {
         var calls = 0
         val endpoint = LicenseHttpEndpoint(
