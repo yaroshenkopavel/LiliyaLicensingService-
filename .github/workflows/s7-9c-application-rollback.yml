@@ -1,0 +1,396 @@
+name: S7.9C Application Version Rollback Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-9c-application-rollback-v0.1"
+  pull_request:
+    paths:
+      - "acceptance/s7-9c/**"
+      - "issuer-deployment/**"
+      - "issuer-runtime/**"
+      - "issuer-https-listener/**"
+      - "issuer-postgres/**"
+      - "issuer-openbao-transit/**"
+      - "issuer-request-auth/**"
+      - ".github/workflows/s7-9c-application-rollback.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  application-rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout N+1 candidate
+        uses: actions/checkout@v4
+
+      - name: Checkout frozen application version N
+        uses: actions/checkout@v4
+        with:
+          ref: 80fbbc702d9318982d9453281634ba49372ad9d5
+          path: version-n
+
+      - name: Checkout frozen LiliyaCore client
+        uses: actions/checkout@v4
+        with:
+          repository: yaroshenkopavel/LiliyaCore-
+          ref: 335fb9dd2f11c4c77983b89f28ebe30d95cb23dd
+          path: liliya-core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Set up Android SDK for frozen LiliyaCore
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Build distinct N and N+1 production artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p version-n --no-daemon             :issuer-deployment:installDist             :issuer-deployment:testClasses             --console=plain
+
+          # N+1 is a distinct application build from this branch. The only build-time
+          # mutation is the version metadata; production License/wire semantics are untouched.
+          sed -i 's/version = "0.1.0-SNAPSHOT"/version = "0.1.0-s7.9c-nplus1"/' build.gradle.kts
+          gradle --no-daemon             :issuer-deployment:installDist             :issuer-deployment:testClasses             --console=plain
+
+          test -x version-n/issuer-deployment/build/install/issuer-deployment/bin/issuer-deployment
+          test -x issuer-deployment/build/install/issuer-deployment/bin/issuer-deployment
+          grep -F '0.1.0-s7.9c-nplus1' build.gradle.kts
+
+      - name: Prepare durable PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_ADMIN="$(openssl rand -hex 24)"
+          PG_RUNTIME="$(openssl rand -hex 24)"
+          echo "::add-mask::$PG_ADMIN"
+          echo "::add-mask::$PG_RUNTIME"
+          printf '%s' "$PG_ADMIN" > .s79c-pg-admin
+          printf '%s' "$PG_RUNTIME" > .s79c-pg-runtime
+          chmod 600 .s79c-pg-admin .s79c-pg-runtime
+
+          docker volume create liliya-s79c-postgres-data >/dev/null
+          docker run -d             --name liliya-s79c-postgres             -p 18610:5432             -v liliya-s79c-postgres-data:/var/lib/postgresql/data             -e POSTGRES_PASSWORD="$PG_ADMIN"             -e POSTGRES_DB=liliya_s79c             postgres:17 >/dev/null
+
+          for i in $(seq 1 60); do
+            if docker exec liliya-s79c-postgres pg_isready -U postgres -d liliya_s79c >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c             -c "CREATE ROLE liliya_s79c_runtime LOGIN PASSWORD '$PG_RUNTIME' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"             -c "GRANT CONNECT ON DATABASE liliya_s79c TO liliya_s79c_runtime" >/dev/null
+
+      - name: Prepare non-dev OpenBao integrated Raft
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .s79c-ob/config .s79c-ob/tls
+          chmod 700 .s79c-ob
+          chmod 755 .s79c-ob/tls
+
+          docker volume create liliya-s79c-openbao-data >/dev/null
+          docker volume create liliya-s79c-openbao-audit >/dev/null
+          docker run --rm --user 0             -v liliya-s79c-openbao-data:/openbao/data             -v liliya-s79c-openbao-audit:/openbao/audit             openbao/openbao:2.6.2             sh -c 'chown -R openbao:openbao /openbao/data /openbao/audit' >/dev/null
+
+          cat > .s79c-ob/tls/ca.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+          [dn]
+          CN = Liliya S7.9C OpenBao CA
+          [v3_ca]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,keyCertSign,cRLSign
+          subjectKeyIdentifier = hash
+          EOF
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1             -keyout .s79c-ob/tls/ca.key             -out .s79c-ob/tls/ca.crt             -config .s79c-ob/tls/ca.cnf >/dev/null 2>&1
+
+          cat > .s79c-ob/tls/server.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          req_extensions = req_ext
+          prompt = no
+          [dn]
+          CN = localhost
+          [req_ext]
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = localhost
+          IP.1 = 127.0.0.1
+          EOF
+
+          openssl req -newkey rsa:2048 -nodes             -keyout .s79c-ob/tls/server.key             -out .s79c-ob/tls/server.csr             -config .s79c-ob/tls/server.cnf >/dev/null 2>&1
+
+          cat > .s79c-ob/tls/server-ext.cnf <<'EOF'
+          basicConstraints=CA:FALSE
+          keyUsage=digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          EOF
+
+          openssl x509 -req -days 1             -in .s79c-ob/tls/server.csr             -CA .s79c-ob/tls/ca.crt             -CAkey .s79c-ob/tls/ca.key             -CAcreateserial             -out .s79c-ob/tls/server.crt             -extfile .s79c-ob/tls/server-ext.cnf >/dev/null 2>&1
+
+          chmod 600 .s79c-ob/tls/ca.key
+          chmod 644 .s79c-ob/tls/ca.crt .s79c-ob/tls/server.crt .s79c-ob/tls/server.key
+
+          OB_TRUST_PASS="$(openssl rand -hex 24)"
+          echo "::add-mask::$OB_TRUST_PASS"
+          printf '%s' "$OB_TRUST_PASS" > .s79c-ob-trust-pass
+          chmod 600 .s79c-ob-trust-pass
+          keytool -importcert -noprompt             -alias s79c-ob-ca             -file .s79c-ob/tls/ca.crt             -keystore .s79c-ob/tls/truststore.p12             -storetype PKCS12             -storepass "$OB_TRUST_PASS" >/dev/null
+
+          cat > .s79c-ob/config/openbao.hcl <<'EOF'
+          ui = false
+          disable_mlock = true
+          storage "raft" {
+            path = "/openbao/data"
+            node_id = "liliya-s79c-node-1"
+          }
+          listener "tcp" {
+            address = "0.0.0.0:8200"
+            cluster_address = "0.0.0.0:8201"
+            tls_cert_file = "/openbao/tls/server.crt"
+            tls_key_file = "/openbao/tls/server.key"
+          }
+          api_addr = "https://127.0.0.1:8200"
+          cluster_addr = "https://127.0.0.1:8201"
+          audit "file" "liliya-s79c-audit" {
+            options {
+              file_path = "/openbao/audit/openbao-audit.log"
+              mode = "0600"
+            }
+          }
+          EOF
+
+          docker run -d             --name liliya-s79c-openbao             -p 18611:8200             -p 18612:8201             -v liliya-s79c-openbao-data:/openbao/data             -v liliya-s79c-openbao-audit:/openbao/audit             -v "$GITHUB_WORKSPACE/.s79c-ob/config/openbao.hcl:/tmp/s79c.hcl:ro"             -v "$GITHUB_WORKSPACE/.s79c-ob/tls:/openbao/tls:ro"             openbao/openbao:2.6.2             server -config=/tmp/s79c.hcl >/dev/null
+
+          for i in $(seq 1 60); do
+            CODE="$(curl -sS --cacert .s79c-ob/tls/ca.crt -o /dev/null -w '%{http_code}' https://127.0.0.1:18611/v1/sys/health || true)"
+            if [[ "$CODE" =~ ^(200|429|472|473|501|503)$ ]]; then break; fi
+            sleep 1
+          done
+
+          INIT="$(docker exec             -e BAO_ADDR=https://127.0.0.1:8200             -e BAO_CACERT=/openbao/tls/ca.crt             liliya-s79c-openbao             bao operator init -key-shares=1 -key-threshold=1 -format=json)"
+          ROOT="$(printf '%s' "$INIT" | jq -r '.root_token')"
+          UNSEAL="$(printf '%s' "$INIT" | jq -r '.unseal_keys_b64[0] // .keys_base64[0]')"
+          unset INIT
+          echo "::add-mask::$ROOT"
+          echo "::add-mask::$UNSEAL"
+
+          curl -fsS --cacert .s79c-ob/tls/ca.crt             -H "Content-Type: application/json" -X POST             -d "$(jq -n --arg key "$UNSEAL" '{key:$key}')"             https://127.0.0.1:18611/v1/sys/unseal >/dev/null
+
+          for i in $(seq 1 60); do
+            CODE="$(curl -sS --cacert .s79c-ob/tls/ca.crt -o /dev/null -w '%{http_code}' https://127.0.0.1:18611/v1/sys/health || true)"
+            if [[ "$CODE" = "200" ]]; then break; fi
+            sleep 1
+          done
+
+          curl -fsS --cacert .s79c-ob/tls/ca.crt             -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"             -X POST -d '{"type":"transit"}'             https://127.0.0.1:18611/v1/sys/mounts/transit >/dev/null
+
+          curl -fsS --cacert .s79c-ob/tls/ca.crt             -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"             -X POST -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'             https://127.0.0.1:18611/v1/transit/keys/license-signing-s79c >/dev/null
+
+          POLICY='path "transit/keys/license-signing-s79c" { capabilities = ["read"] }
+          path "transit/sign/license-signing-s79c/sha2-256" { capabilities = ["update"] }'
+          curl -fsS --cacert .s79c-ob/tls/ca.crt             -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"             -X PUT -d "$(jq -n --arg policy "$POLICY" '{policy:$policy}')"             https://127.0.0.1:18611/v1/sys/policies/acl/liliya-s79c-signer >/dev/null
+
+          APP_TOKEN="$(
+            curl -fsS --cacert .s79c-ob/tls/ca.crt               -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"               -X POST -d '{"policies":["liliya-s79c-signer"],"ttl":"1h","renewable":false,"no_default_policy":true}'               https://127.0.0.1:18611/v1/auth/token/create | jq -r '.auth.client_token'
+          )"
+          echo "::add-mask::$APP_TOKEN"
+          printf '%s' "$APP_TOKEN" > .s79c-ob-token
+          chmod 600 .s79c-ob-token
+
+          KEY_META="$(curl -fsS --cacert .s79c-ob/tls/ca.crt             -H "X-Vault-Token: $APP_TOKEN"             https://127.0.0.1:18611/v1/transit/keys/license-signing-s79c)"
+          printf '%s' "$KEY_META" | jq -e '.data.latest_version == 1' >/dev/null
+          printf '%s' "$KEY_META" | jq -r '.data.keys["1"].public_key' > .s79c-public-before.pem
+          openssl pkey -pubin -in .s79c-public-before.pem -outform DER -out .s79c-public.der
+
+      - name: Prepare external HTTPS and request-auth material
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .s79c-https
+          chmod 700 .s79c-https
+          TLS_PASS="$(openssl rand -hex 24)"
+          AUTH_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$TLS_PASS"
+          echo "::add-mask::$AUTH_SECRET"
+          printf '%s' "$TLS_PASS" > .s79c-https-pass
+          printf '%s' "$AUTH_SECRET" > .s79c-auth
+          chmod 600 .s79c-https-pass .s79c-auth
+
+          cat > .s79c-https/openssl.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3
+          prompt = no
+          [dn]
+          CN = localhost
+          [v3]
+          subjectAltName = DNS:localhost,IP:127.0.0.1
+          keyUsage = digitalSignature,keyEncipherment
+          extendedKeyUsage = serverAuth
+          basicConstraints = CA:FALSE
+          EOF
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1             -keyout .s79c-https/server.key             -out .s79c-https/server.crt             -config .s79c-https/openssl.cnf >/dev/null 2>&1
+
+          openssl pkcs12 -export             -inkey .s79c-https/server.key             -in .s79c-https/server.crt             -name liliya-s79c             -passout "pass:$TLS_PASS"             -out .s79c-https/server.p12 >/dev/null 2>&1
+
+          keytool -importcert -noprompt             -alias s79c-https             -file .s79c-https/server.crt             -keystore .s79c-https/truststore.p12             -storetype PKCS12             -storepass "$TLS_PASS" >/dev/null
+
+      - name: Initialize schema through version N admin helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="version-n/issuer-deployment/build/install/issuer-deployment/lib/*:version-n/issuer-deployment/build/classes/kotlin/test:version-n/issuer-deployment/build/resources/test"
+          PG_ADMIN="$(cat .s79c-pg-admin)"
+          PG_RUNTIME="$(cat .s79c-pg-runtime)"
+
+          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18610/liliya_s79c           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD="$PG_ADMIN"             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c             -c "GRANT USAGE ON SCHEMA public TO liliya_s79c_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79c_runtime" >/dev/null
+
+      - name: Start application version N
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="version-n/issuer-deployment/build/install/issuer-deployment/lib/*:version-n/issuer-deployment/build/classes/kotlin/test:version-n/issuer-deployment/build/resources/test"
+          APP_TOKEN="$(cat .s79c-ob-token)"
+          AUTH_SECRET="$(cat .s79c-auth)"
+          TLS_PASS="$(cat .s79c-https-pass)"
+          PG_RUNTIME="$(cat .s79c-pg-runtime)"
+          OB_TRUST_PASS="$(cat .s79c-ob-trust-pass)"
+
+          JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s79c-ob/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$OB_TRUST_PASS"           LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18613           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18610/liliya_s79c           LILIYA_POSTGRES_USERNAME=liliya_s79c_runtime           LILIYA_POSTGRES_PASSWORD="$PG_RUNTIME"           LILIYA_OPENBAO_ADDRESS=https://127.0.0.1:18611           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79c-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79c-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79c-https/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79c           LILIYA_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79c-version-n-before.log 2>&1 &
+          echo $! > .s79c-service-pid
+
+          for i in $(seq 1 60); do
+            if grep -F '"code":"RUNTIME_READY"' s79c-version-n-before.log >/dev/null 2>&1; then break; fi
+            if ! kill -0 "$(cat .s79c-service-pid)" >/dev/null 2>&1; then
+              cat s79c-version-n-before.log
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -F '"code":"RUNTIME_READY"' s79c-version-n-before.log
+
+      - name: Frozen Core creates state on version N
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp acceptance/s7-9c/LicenseS79cApplicationRollbackAcceptanceTest.kt             liliya-core/license-transport-client/src/test/kotlin/pro/liliya/core/licensetransport/
+
+          LIVE_S79C_PHASE=before           LIVE_S79C_HTTPS_ENDPOINT=https://127.0.0.1:18613/v1/license           LIVE_S79C_BEARER="$(cat .s79c-auth)"           LIVE_S79C_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79c-public.der"           LIVE_S79C_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s79c-https/truststore.p12"           LIVE_S79C_TRUSTSTORE_PASSWORD="$(cat .s79c-https-pass)"           LIVE_S79C_EVIDENCE_PATH="$GITHUB_WORKSPACE/s79c-before-evidence.txt"             gradle -p liliya-core :license-transport-client:test               --tests "pro.liliya.core.licensetransport.LicenseS79cApplicationRollbackAcceptanceTest.version_n_creates_authoritative_state"               --rerun-tasks --console=plain
+
+          grep -F 'LICENSING_S7_9C_BEFORE_EVIDENCE=' s79c-before-evidence.txt
+
+      - name: Stop version N without touching authoritative dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          PID="$(cat .s79c-service-pid)"
+          kill -TERM "$PID"
+          for i in $(seq 1 30); do
+            if ! kill -0 "$PID" >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          ! kill -0 "$PID" >/dev/null 2>&1
+          docker exec liliya-s79c-postgres pg_isready -U postgres -d liliya_s79c >/dev/null
+          curl -fsS --cacert .s79c-ob/tls/ca.crt https://127.0.0.1:18611/v1/sys/health >/dev/null
+
+      - name: Deploy incompatible application version N+1 and prove fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          APP_TOKEN="$(cat .s79c-ob-token)"
+          AUTH_SECRET="$(cat .s79c-auth)"
+          TLS_PASS="$(cat .s79c-https-pass)"
+          PG_RUNTIME="$(cat .s79c-pg-runtime)"
+          OB_TRUST_PASS="$(cat .s79c-ob-trust-pass)"
+
+          set +e
+          JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s79c-ob/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$OB_TRUST_PASS"           LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18613           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18610/liliya_s79c           LILIYA_POSTGRES_USERNAME=liliya_s79c_runtime           LILIYA_POSTGRES_PASSWORD="$PG_RUNTIME"           LILIYA_OPENBAO_ADDRESS=https://127.0.0.1:18611           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79c-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79c-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79c-https/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79c           LILIYA_OPENBAO_KEY_VERSION=2             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79c-version-nplus1.log 2>&1
+          STATUS=$?
+          set -e
+
+          test "$STATUS" -ne 0
+          grep -F '"code":"RUNTIME_NOT_READY"' s79c-version-nplus1.log
+          grep -F '"reason":"OPENBAO_UNAVAILABLE"' s79c-version-nplus1.log
+          ! grep -F "$(cat .s79c-pg-runtime)" s79c-version-nplus1.log
+          ! grep -F "$(cat .s79c-auth)" s79c-version-nplus1.log
+          ! grep -F "$(cat .s79c-ob-token)" s79c-version-nplus1.log
+
+          docker exec liliya-s79c-postgres pg_isready -U postgres -d liliya_s79c >/dev/null
+          KEY_META="$(curl -fsS --cacert .s79c-ob/tls/ca.crt             -H "X-Vault-Token: $(cat .s79c-ob-token)"             https://127.0.0.1:18611/v1/transit/keys/license-signing-s79c)"
+          printf '%s' "$KEY_META" | jq -e '.data.latest_version == 1' >/dev/null
+
+      - name: Roll back to exact application version N
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="version-n/issuer-deployment/build/install/issuer-deployment/lib/*:version-n/issuer-deployment/build/classes/kotlin/test:version-n/issuer-deployment/build/resources/test"
+          APP_TOKEN="$(cat .s79c-ob-token)"
+          AUTH_SECRET="$(cat .s79c-auth)"
+          TLS_PASS="$(cat .s79c-https-pass)"
+          PG_RUNTIME="$(cat .s79c-pg-runtime)"
+          OB_TRUST_PASS="$(cat .s79c-ob-trust-pass)"
+
+          JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s79c-ob/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$OB_TRUST_PASS"           LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18613           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18610/liliya_s79c           LILIYA_POSTGRES_USERNAME=liliya_s79c_runtime           LILIYA_POSTGRES_PASSWORD="$PG_RUNTIME"           LILIYA_OPENBAO_ADDRESS=https://127.0.0.1:18611           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79c-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79c-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79c-https/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79c           LILIYA_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79c-version-n-after.log 2>&1 &
+          echo $! > .s79c-service-pid
+
+          for i in $(seq 1 60); do
+            if grep -F '"code":"RUNTIME_READY"' s79c-version-n-after.log >/dev/null 2>&1; then break; fi
+            if ! kill -0 "$(cat .s79c-service-pid)" >/dev/null 2>&1; then
+              cat s79c-version-n-after.log
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -F '"code":"RUNTIME_READY"' s79c-version-n-after.log
+
+      - name: Frozen Core proves monotonic continuity after rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE_S79C_PHASE=after           LIVE_S79C_HTTPS_ENDPOINT=https://127.0.0.1:18613/v1/license           LIVE_S79C_BEARER="$(cat .s79c-auth)"           LIVE_S79C_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79c-public.der"           LIVE_S79C_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s79c-https/truststore.p12"           LIVE_S79C_TRUSTSTORE_PASSWORD="$(cat .s79c-https-pass)"           LIVE_S79C_EVIDENCE_PATH="$GITHUB_WORKSPACE/s79c-after-evidence.txt"             gradle -p liliya-core :license-transport-client:test               --tests "pro.liliya.core.licensetransport.LicenseS79cApplicationRollbackAcceptanceTest.rolled_back_version_n_continues_authoritative_state"               --rerun-tasks --console=plain
+
+          grep -F 'LICENSING_S7_9C_AFTER_EVIDENCE=' s79c-after-evidence.txt
+
+          KEY_META="$(curl -fsS --cacert .s79c-ob/tls/ca.crt             -H "X-Vault-Token: $(cat .s79c-ob-token)"             https://127.0.0.1:18611/v1/transit/keys/license-signing-s79c)"
+          printf '%s' "$KEY_META" | jq -e '.data.latest_version == 1' >/dev/null
+          printf '%s' "$KEY_META" | jq -r '.data.keys["1"].public_key' > .s79c-public-after.pem
+          cmp .s79c-public-before.pem .s79c-public-after.pem
+
+          echo 'LICENSING_S7_9C_EVIDENCE={"versionNExactBaseline":true,"distinctNPlus1Artifact":true,"nCreatedReplayZeroToOne":true,"nPlus1FailClosed":true,"authoritativeDependenciesNotReset":true,"rollbackToExactN":true,"replayAfterRollback":2,"signingKeyVersionContinuity":true,"publicKeyContinuity":true,"frozenClientVerification":true,"attemptLimitOne":true,"hiddenRetry":false,"stoppedBeforeAuthorityExecution":true}'
+          echo "=== S7.9C APPLICATION VERSION ROLLBACK PASS ==="
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .s79c-service-pid ]]; then
+            kill -TERM "$(cat .s79c-service-pid)" >/dev/null 2>&1 || true
+          fi
+          docker rm -f liliya-s79c-postgres liliya-s79c-openbao >/dev/null 2>&1 || true
+          docker volume rm liliya-s79c-postgres-data liliya-s79c-openbao-data liliya-s79c-openbao-audit >/dev/null 2>&1 || true
+          rm -rf .s79c-ob .s79c-https
+          rm -f .s79c-* s79c-*.log s79c-*-evidence.txt
