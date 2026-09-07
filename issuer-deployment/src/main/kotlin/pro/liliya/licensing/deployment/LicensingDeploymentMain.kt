@@ -205,6 +205,12 @@ private fun ProductionRuntimeMaterialKey.toOperationalDetail():
             LicensingOperationalDetailCode.OPENBAO_KEY_NAME
         ProductionRuntimeMaterialKey.OPENBAO_KEY_VERSION ->
             LicensingOperationalDetailCode.OPENBAO_KEY_VERSION
+        ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_REFERENCE ->
+            LicensingOperationalDetailCode.SERVICE_STATE_OPENBAO_KEY_REFERENCE
+        ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_NAME ->
+            LicensingOperationalDetailCode.SERVICE_STATE_OPENBAO_KEY_NAME
+        ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_VERSION ->
+            LicensingOperationalDetailCode.SERVICE_STATE_OPENBAO_KEY_VERSION
     }
 
 private fun LicensingRuntimeFailure.toOperationalReason():

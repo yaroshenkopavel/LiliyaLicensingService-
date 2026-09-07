@@ -11,6 +11,7 @@ import pro.liliya.licensing.issuer.DecisionTransactionPort
 import pro.liliya.licensing.issuer.DecisionTransactionResult
 import pro.liliya.licensing.signing.SignedLicenseEnvelope
 import pro.liliya.licensing.signing.SigningKeyReference
+import pro.liliya.licensing.servicestate.CurrentDecisionStateReadPort
 
 data class PersistedDecisionRecord(
     val scope: DecisionScope,
@@ -26,7 +27,7 @@ data class PersistedDecisionRecord(
  */
 class PostgreSqlDecisionTransactionPort(
     private val dataSource: DataSource
-) : DecisionTransactionPort {
+) : DecisionTransactionPort, CurrentDecisionStateReadPort {
 
     fun initializeSchema() {
         dataSource.connection.use { connection ->
@@ -184,6 +185,8 @@ class PostgreSqlDecisionTransactionPort(
             DecisionTransactionResult.Rejected(DecisionTransactionFailure.INTERNAL_FAILURE)
         }
     }
+
+    override fun read(scope: DecisionScope): DecisionState? = inspect(scope)?.state
 
     fun inspect(scope: DecisionScope): PersistedDecisionRecord? =
         try {

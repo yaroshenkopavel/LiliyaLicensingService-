@@ -6,11 +6,23 @@ data class ProductionRuntimeMaterial(
     val tlsKeyStorePath: Path,
     val tlsKeyStorePassword: DeploymentSecret,
     val openBaoKeyName: String,
-    val openBaoKeyVersion: Int
+    val openBaoKeyVersion: Int,
+    val serviceStateOpenBaoKeyReference: String,
+    val serviceStateOpenBaoKeyName: String,
+    val serviceStateOpenBaoKeyVersion: Int
 ) : AutoCloseable {
     init {
         require(openBaoKeyName.isNotBlank()) { "OpenBao key name must not be blank" }
         require(openBaoKeyVersion > 0) { "OpenBao key version must be positive" }
+        require(serviceStateOpenBaoKeyReference.isNotBlank()) {
+            "service-state OpenBao key reference must not be blank"
+        }
+        require(serviceStateOpenBaoKeyName.isNotBlank()) {
+            "service-state OpenBao key name must not be blank"
+        }
+        require(serviceStateOpenBaoKeyVersion > 0) {
+            "service-state OpenBao key version must be positive"
+        }
     }
 
     override fun close() {
@@ -20,7 +32,10 @@ data class ProductionRuntimeMaterial(
     override fun toString(): String =
         "ProductionRuntimeMaterial(tlsKeyStorePath=<redacted>," +
             "tlsKeyStorePassword=<redacted>,openBaoKeyName=" + openBaoKeyName +
-            ",openBaoKeyVersion=" + openBaoKeyVersion + ")"
+            ",openBaoKeyVersion=" + openBaoKeyVersion +
+            ",serviceStateOpenBaoKeyReference=" + serviceStateOpenBaoKeyReference +
+            ",serviceStateOpenBaoKeyName=" + serviceStateOpenBaoKeyName +
+            ",serviceStateOpenBaoKeyVersion=" + serviceStateOpenBaoKeyVersion + ")"
 }
 
 enum class ProductionRuntimeMaterialKey(
@@ -30,7 +45,10 @@ enum class ProductionRuntimeMaterialKey(
     TLS_KEYSTORE_PATH("LILIYA_TLS_KEYSTORE_PATH", false),
     TLS_KEYSTORE_PASSWORD("LILIYA_TLS_KEYSTORE_PASSWORD", true),
     OPENBAO_KEY_NAME("LILIYA_OPENBAO_KEY_NAME", false),
-    OPENBAO_KEY_VERSION("LILIYA_OPENBAO_KEY_VERSION", false)
+    OPENBAO_KEY_VERSION("LILIYA_OPENBAO_KEY_VERSION", false),
+    SERVICE_STATE_OPENBAO_KEY_REFERENCE("LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE", false),
+    SERVICE_STATE_OPENBAO_KEY_NAME("LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME", false),
+    SERVICE_STATE_OPENBAO_KEY_VERSION("LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION", false)
 }
 
 enum class ProductionRuntimeMaterialFailureReason {
@@ -97,6 +115,37 @@ class ProductionRuntimeMaterialLoader(
             )
         }
 
+
+        val serviceStateKeyReference = values.getValue(
+            ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_REFERENCE
+        )
+        if (serviceStateKeyReference.isBlank()) {
+            return rejected(
+                ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_REFERENCE,
+                ProductionRuntimeMaterialFailureReason.INVALID_VALUE
+            )
+        }
+
+        val serviceStateKeyName = values.getValue(
+            ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_NAME
+        )
+        if (serviceStateKeyName.isBlank()) {
+            return rejected(
+                ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_NAME,
+                ProductionRuntimeMaterialFailureReason.INVALID_VALUE
+            )
+        }
+
+        val serviceStateKeyVersion = values.getValue(
+            ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_VERSION
+        ).toIntOrNull()
+        if (serviceStateKeyVersion == null || serviceStateKeyVersion <= 0) {
+            return rejected(
+                ProductionRuntimeMaterialKey.SERVICE_STATE_OPENBAO_KEY_VERSION,
+                ProductionRuntimeMaterialFailureReason.INVALID_VALUE
+            )
+        }
+
         return ProductionRuntimeMaterialLoadResult.Loaded(
             ProductionRuntimeMaterial(
                 tlsKeyStorePath = path,
@@ -106,7 +155,10 @@ class ProductionRuntimeMaterialLoader(
                     ).toCharArray()
                 ),
                 openBaoKeyName = keyName,
-                openBaoKeyVersion = keyVersion
+                openBaoKeyVersion = keyVersion,
+                serviceStateOpenBaoKeyReference = serviceStateKeyReference,
+                serviceStateOpenBaoKeyName = serviceStateKeyName,
+                serviceStateOpenBaoKeyVersion = serviceStateKeyVersion
             )
         )
     }

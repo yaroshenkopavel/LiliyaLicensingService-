@@ -1,0 +1,389 @@
+name: S7.9D Service-State LicensePolicy Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-9d-service-state-v0.1"
+  pull_request:
+    paths:
+      - "issuer-core/**"
+      - "issuer-postgres/**"
+      - "issuer-openbao-transit/**"
+      - "issuer-transport-contract/**"
+      - "issuer-http-endpoint/**"
+      - "issuer-https-listener/**"
+      - "issuer-deployment/**"
+      - "acceptance/s7-9d/**"
+      - ".github/workflows/s7-9d-service-state-policy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  service-state-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Checkout frozen LiliyaCore
+        uses: actions/checkout@v4
+        with:
+          repository: yaroshenkopavel/LiliyaCore-
+          ref: 335fb9dd2f11c4c77983b89f28ebe30d95cb23dd
+          path: liliya-core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Set up Android SDK for frozen LiliyaCore
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Build production distribution and acceptance provider
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon             :issuer-deployment:installDist             :issuer-deployment:testClasses             --console=plain
+
+      - name: Prepare durable PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_ADMIN="$(openssl rand -hex 24)"
+          PG_RUNTIME="$(openssl rand -hex 24)"
+          echo "::add-mask::$PG_ADMIN"
+          echo "::add-mask::$PG_RUNTIME"
+          printf '%s' "$PG_ADMIN" > .s79d-pg-admin
+          printf '%s' "$PG_RUNTIME" > .s79d-pg-runtime
+          chmod 600 .s79d-pg-admin .s79d-pg-runtime
+
+          docker volume create liliya-s79d-postgres-data >/dev/null
+          docker run -d             --name liliya-s79d-postgres             -p 18630:5432             -v liliya-s79d-postgres-data:/var/lib/postgresql/data             -e POSTGRES_PASSWORD="$PG_ADMIN"             -e POSTGRES_DB=liliya_s79d             postgres:17 >/dev/null
+
+          for i in $(seq 1 60); do
+            if docker exec liliya-s79d-postgres pg_isready -U postgres -d liliya_s79d >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec liliya-s79d-postgres pg_isready -U postgres -d liliya_s79d >/dev/null
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79d-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79d             -c "CREATE ROLE liliya_s79d_runtime LOGIN PASSWORD '$PG_RUNTIME' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"             -c "GRANT CONNECT ON DATABASE liliya_s79d TO liliya_s79d_runtime" >/dev/null
+
+      - name: Prepare non-dev OpenBao integrated Raft TLS with separate keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .s79d-ob/config .s79d-ob/tls
+          chmod 700 .s79d-ob
+          chmod 755 .s79d-ob/tls
+
+          docker volume create liliya-s79d-openbao-data >/dev/null
+          docker volume create liliya-s79d-openbao-audit >/dev/null
+          docker run --rm --user 0             -v liliya-s79d-openbao-data:/openbao/data             -v liliya-s79d-openbao-audit:/openbao/audit             openbao/openbao:2.6.2             sh -c 'chown -R openbao:openbao /openbao/data /openbao/audit' >/dev/null
+
+          cat > .s79d-ob/tls/ca.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+          [dn]
+          CN = Liliya S7.9D OpenBao CA
+          [v3_ca]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,keyCertSign,cRLSign
+          subjectKeyIdentifier = hash
+          EOF
+
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1             -keyout .s79d-ob/tls/ca.key             -out .s79d-ob/tls/ca.crt             -config .s79d-ob/tls/ca.cnf >/dev/null 2>&1
+
+          cat > .s79d-ob/tls/server.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          req_extensions = req_ext
+          prompt = no
+          [dn]
+          CN = localhost
+          [req_ext]
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = localhost
+          IP.1 = 127.0.0.1
+          EOF
+
+          openssl req -newkey rsa:2048 -nodes             -keyout .s79d-ob/tls/server.key             -out .s79d-ob/tls/server.csr             -config .s79d-ob/tls/server.cnf >/dev/null 2>&1
+
+          cat > .s79d-ob/tls/server-ext.cnf <<'EOF'
+          basicConstraints=CA:FALSE
+          keyUsage=digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          EOF
+
+          openssl x509 -req -days 1             -in .s79d-ob/tls/server.csr             -CA .s79d-ob/tls/ca.crt             -CAkey .s79d-ob/tls/ca.key             -CAcreateserial             -out .s79d-ob/tls/server.crt             -extfile .s79d-ob/tls/server-ext.cnf >/dev/null 2>&1
+
+          chmod 600 .s79d-ob/tls/ca.key
+          chmod 644 .s79d-ob/tls/ca.crt .s79d-ob/tls/server.crt .s79d-ob/tls/server.key
+
+          OB_TRUST_PASS="$(openssl rand -hex 24)"
+          echo "::add-mask::$OB_TRUST_PASS"
+          printf '%s' "$OB_TRUST_PASS" > .s79d-ob-trust-pass
+          chmod 600 .s79d-ob-trust-pass
+          keytool -importcert -noprompt             -alias s79d-ob-ca             -file .s79d-ob/tls/ca.crt             -keystore .s79d-ob/tls/truststore.p12             -storetype PKCS12             -storepass "$OB_TRUST_PASS" >/dev/null
+
+          cat > .s79d-ob/config/openbao.hcl <<'EOF'
+          ui = false
+          disable_mlock = true
+          storage "raft" {
+            path = "/openbao/data"
+            node_id = "liliya-s79d-node-1"
+          }
+          listener "tcp" {
+            address = "0.0.0.0:8200"
+            cluster_address = "0.0.0.0:8201"
+            tls_cert_file = "/openbao/tls/server.crt"
+            tls_key_file = "/openbao/tls/server.key"
+          }
+          api_addr = "https://127.0.0.1:8200"
+          cluster_addr = "https://127.0.0.1:8201"
+          audit "file" "liliya-s79d-audit" {
+            options {
+              file_path = "/openbao/audit/openbao-audit.log"
+              mode = "0600"
+            }
+          }
+          EOF
+
+          docker run -d             --name liliya-s79d-openbao             -p 18631:8200             -p 18632:8201             -v liliya-s79d-openbao-data:/openbao/data             -v liliya-s79d-openbao-audit:/openbao/audit             -v "$GITHUB_WORKSPACE/.s79d-ob/config/openbao.hcl:/tmp/s79d.hcl:ro"             -v "$GITHUB_WORKSPACE/.s79d-ob/tls:/openbao/tls:ro"             openbao/openbao:2.6.2             server -config=/tmp/s79d.hcl >/dev/null
+
+          for i in $(seq 1 60); do
+            CODE="$(curl -sS --cacert .s79d-ob/tls/ca.crt -o /dev/null -w '%{http_code}' https://127.0.0.1:18631/v1/sys/health || true)"
+            if [[ "$CODE" =~ ^(200|429|472|473|501|503)$ ]]; then break; fi
+            sleep 1
+          done
+
+          INIT="$(docker exec             -e BAO_ADDR=https://127.0.0.1:8200             -e BAO_CACERT=/openbao/tls/ca.crt             liliya-s79d-openbao             bao operator init -key-shares=1 -key-threshold=1 -format=json)"
+          ROOT="$(printf '%s' "$INIT" | jq -r '.root_token')"
+          UNSEAL="$(printf '%s' "$INIT" | jq -r '.unseal_keys_b64[0] // .keys_base64[0]')"
+          unset INIT
+          echo "::add-mask::$ROOT"
+          echo "::add-mask::$UNSEAL"
+
+          curl -fsS --cacert .s79d-ob/tls/ca.crt             -H "Content-Type: application/json" -X POST             -d "$(jq -n --arg key "$UNSEAL" '{key:$key}')"             https://127.0.0.1:18631/v1/sys/unseal >/dev/null
+
+          for i in $(seq 1 60); do
+            CODE="$(curl -sS --cacert .s79d-ob/tls/ca.crt -o /dev/null -w '%{http_code}' https://127.0.0.1:18631/v1/sys/health || true)"
+            if [[ "$CODE" = "200" ]]; then break; fi
+            sleep 1
+          done
+          test "$(curl -sS --cacert .s79d-ob/tls/ca.crt -o /dev/null -w '%{http_code}' https://127.0.0.1:18631/v1/sys/health)" = "200"
+
+          curl -fsS --cacert .s79d-ob/tls/ca.crt             -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"             -X POST -d '{"type":"transit"}'             https://127.0.0.1:18631/v1/sys/mounts/transit >/dev/null
+
+          for KEY in license-signing-s79d license-service-state-s79d; do
+            curl -fsS --cacert .s79d-ob/tls/ca.crt               -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"               -X POST -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'               "https://127.0.0.1:18631/v1/transit/keys/$KEY" >/dev/null
+          done
+
+          POLICY='path "transit/keys/license-signing-s79d" { capabilities = ["read"] }
+          path "transit/sign/license-signing-s79d/sha2-256" { capabilities = ["update"] }
+          path "transit/keys/license-service-state-s79d" { capabilities = ["read"] }
+          path "transit/sign/license-service-state-s79d/sha2-256" { capabilities = ["update"] }'
+
+          curl -fsS --cacert .s79d-ob/tls/ca.crt             -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"             -X PUT -d "$(jq -n --arg policy "$POLICY" '{policy:$policy}')"             https://127.0.0.1:18631/v1/sys/policies/acl/liliya-s79d-signer >/dev/null
+
+          APP_TOKEN="$(
+            curl -fsS --cacert .s79d-ob/tls/ca.crt               -H "X-Vault-Token: $ROOT" -H "Content-Type: application/json"               -X POST               -d '{"policies":["liliya-s79d-signer"],"ttl":"1h","renewable":false,"no_default_policy":true}'               https://127.0.0.1:18631/v1/auth/token/create |
+              jq -r '.auth.client_token'
+          )"
+          test -n "$APP_TOKEN"
+          echo "::add-mask::$APP_TOKEN"
+          printf '%s' "$APP_TOKEN" > .s79d-ob-token
+          chmod 600 .s79d-ob-token
+
+          for SPEC in "license-signing-s79d:entitlement" "license-service-state-s79d:service-state"; do
+            KEY="${SPEC%%:*}"
+            NAME="${SPEC##*:}"
+            META="$(curl -fsS --cacert .s79d-ob/tls/ca.crt               -H "X-Vault-Token: $APP_TOKEN"               "https://127.0.0.1:18631/v1/transit/keys/$KEY")"
+            printf '%s' "$META" | jq -e '.data.latest_version == 1' >/dev/null
+            printf '%s' "$META" | jq -r '.data.keys["1"].public_key' > ".s79d-$NAME-public.pem"
+            openssl pkey -pubin -in ".s79d-$NAME-public.pem" -outform DER -out ".s79d-$NAME-public.der"
+          done
+
+          ROTATE_STATUS="$(
+            curl -sS --cacert .s79d-ob/tls/ca.crt               -o .s79d-rotate-denied.out               -w '%{http_code}'               -H "X-Vault-Token: $APP_TOKEN"               -H "Content-Type: application/json"               -X POST -d '{}'               https://127.0.0.1:18631/v1/transit/keys/license-service-state-s79d/rotate
+          )"
+          test "$ROTATE_STATUS" = "403"
+
+      - name: Prepare external HTTPS and request-auth material
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .s79d-https
+          chmod 700 .s79d-https
+          TLS_PASS="$(openssl rand -hex 24)"
+          AUTH_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$TLS_PASS"
+          echo "::add-mask::$AUTH_SECRET"
+          printf '%s' "$TLS_PASS" > .s79d-https-pass
+          printf '%s' "$AUTH_SECRET" > .s79d-auth
+          chmod 600 .s79d-https-pass .s79d-auth
+
+          cat > .s79d-https/ca.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+          [dn]
+          CN = Liliya S7.9D HTTPS CA
+          [v3_ca]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,keyCertSign,cRLSign
+          subjectKeyIdentifier = hash
+          EOF
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1             -keyout .s79d-https/ca.key -out .s79d-https/ca.crt             -config .s79d-https/ca.cnf >/dev/null 2>&1
+
+          cat > .s79d-https/server.cnf <<'EOF'
+          [req]
+          distinguished_name = dn
+          req_extensions = req_ext
+          prompt = no
+          [dn]
+          CN = localhost
+          [req_ext]
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = localhost
+          IP.1 = 127.0.0.1
+          EOF
+          openssl req -newkey rsa:2048 -nodes             -keyout .s79d-https/server.key -out .s79d-https/server.csr             -config .s79d-https/server.cnf >/dev/null 2>&1
+
+          cat > .s79d-https/server-ext.cnf <<'EOF'
+          basicConstraints=CA:FALSE
+          keyUsage=digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          EOF
+          openssl x509 -req -days 1             -in .s79d-https/server.csr             -CA .s79d-https/ca.crt -CAkey .s79d-https/ca.key -CAcreateserial             -out .s79d-https/server.crt             -extfile .s79d-https/server-ext.cnf >/dev/null 2>&1
+
+          openssl pkcs12 -export             -inkey .s79d-https/server.key -in .s79d-https/server.crt             -certfile .s79d-https/ca.crt -name liliya-s79d             -passout "pass:$TLS_PASS" -out .s79d-https/server.p12 >/dev/null 2>&1
+
+          keytool -importcert -noprompt             -alias s79d-https-ca -file .s79d-https/ca.crt             -keystore .s79d-https/truststore.p12 -storetype PKCS12             -storepass "$TLS_PASS" >/dev/null
+
+      - name: Initialize schema through separate admin helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          PG_ADMIN="$(cat .s79d-pg-admin)"
+          PG_RUNTIME="$(cat .s79d-pg-runtime)"
+          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18630/liliya_s79d           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD="$PG_ADMIN"             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt |
+            tee s79d-schema.log
+          grep -F 'LICENSING_S7_9A_SCHEMA_EVIDENCE=' s79d-schema.log
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79d-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79d             -c "GRANT USAGE ON SCHEMA public TO liliya_s79d_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79d_runtime" >/dev/null
+
+      - name: Start real production entrypoint with both exact signing keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          APP_TOKEN="$(cat .s79d-ob-token)"
+          AUTH_SECRET="$(cat .s79d-auth)"
+          TLS_PASS="$(cat .s79d-https-pass)"
+          PG_RUNTIME="$(cat .s79d-pg-runtime)"
+          OB_TRUST_PASS="$(cat .s79d-ob-trust-pass)"
+
+          JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s79d-ob/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$OB_TRUST_PASS"           LILIYA_ENVIRONMENT=STAGING           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18633           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18630/liliya_s79d           LILIYA_POSTGRES_USERNAME=liliya_s79d_runtime           LILIYA_POSTGRES_PASSWORD="$PG_RUNTIME"           LILIYA_OPENBAO_ADDRESS=https://127.0.0.1:18631           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79d-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79d-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79d-https/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79d           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9d-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79d           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79d-service.log 2>&1 &
+          echo $! > .s79d-service-pid
+
+          for i in $(seq 1 90); do
+            if grep -F '"code":"RUNTIME_READY"' s79d-service.log >/dev/null 2>&1; then break; fi
+            if ! kill -0 "$(cat .s79d-service-pid)" >/dev/null 2>&1; then
+              cat s79d-service.log
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -F '"code":"RUNTIME_READY"' s79d-service.log
+          curl -fsS --cacert .s79d-https/ca.crt https://127.0.0.1:18633/health/ready |
+            grep -F '"status":"ready"'
+
+      - name: Prove auth rejection before state access surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY='{"wireVersion":1,"kind":"service-state-request","protocolVersion":1,"productId":"liliya-pro","subjectReference":"s7-9d-service-state-subject","requestId":"s7-9d-no-auth"}'
+          STATUS="$(curl -sS --cacert .s79d-https/ca.crt -o .s79d-no-auth.out -w '%{http_code}'             -H "Content-Type: application/json" -X POST -d "$BODY"             https://127.0.0.1:18633/v1/license/service-state)"
+          test "$STATUS" = "401"
+          grep -F '"reason":"AUTHENTICATION_REQUIRED"' .s79d-no-auth.out
+
+          INVALID="$(curl -sS --cacert .s79d-https/ca.crt -o .s79d-invalid-auth.out -w '%{http_code}'             -H "Content-Type: application/json"             -H "Authorization: Bearer definitely-wrong"             -X POST -d "$BODY"             https://127.0.0.1:18633/v1/license/service-state)"
+          test "$INVALID" = "401"
+
+      - name: Run frozen Core final service-state policy chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp acceptance/s7-9d/LicenseS79dServiceStatePolicyAcceptanceTest.kt             liliya-core/license-transport-client/src/test/kotlin/pro/liliya/core/licensetransport/
+
+          LIVE_S79D_PHASE=positive           LIVE_S79D_LICENSE_ENDPOINT=https://127.0.0.1:18633/v1/license           LIVE_S79D_SERVICE_STATE_ENDPOINT=https://127.0.0.1:18633/v1/license/service-state           LIVE_S79D_BEARER="$(cat .s79d-auth)"           LIVE_S79D_ENTITLEMENT_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-entitlement-public.der"           LIVE_S79D_SERVICE_STATE_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-service-state-public.der"           LIVE_S79D_SERVICE_STATE_KEY_ID=s7-9d-service-state-key           LIVE_S79D_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s79d-https/truststore.p12"           LIVE_S79D_TRUSTSTORE_PASSWORD="$(cat .s79d-https-pass)"           LIVE_S79D_EVIDENCE_PATH="$GITHUB_WORKSPACE/s79d-positive-evidence.txt"             gradle -p liliya-core :license-transport-client:test               --tests "pro.liliya.core.licensetransport.LicenseS79dServiceStatePolicyAcceptanceTest.backend_issued_service_state_reaches_frozen_policy_and_stops_before_authority"               --rerun-tasks --console=plain
+
+          grep -F 'LICENSING_S7_9D_POSITIVE_EVIDENCE=' s79d-positive-evidence.txt
+          REPLAY="$(docker exec -e PGPASSWORD="$(cat .s79d-pg-runtime)" liliya-s79d-postgres             psql -At -U liliya_s79d_runtime -d liliya_s79d             -c "SELECT replay_sequence FROM licensing_decision_state WHERE subject='s7-9d-service-state-subject' AND product_id='liliya-pro'")"
+          test "$REPLAY" = "1"
+
+      - name: Prove tampered backend proof fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE_S79D_PHASE=negative           LIVE_S79D_LICENSE_ENDPOINT=https://127.0.0.1:18633/v1/license           LIVE_S79D_SERVICE_STATE_ENDPOINT=https://127.0.0.1:18633/v1/license/service-state           LIVE_S79D_BEARER="$(cat .s79d-auth)"           LIVE_S79D_ENTITLEMENT_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-entitlement-public.der"           LIVE_S79D_SERVICE_STATE_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-service-state-public.der"           LIVE_S79D_SERVICE_STATE_KEY_ID=s7-9d-service-state-key           LIVE_S79D_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s79d-https/truststore.p12"           LIVE_S79D_TRUSTSTORE_PASSWORD="$(cat .s79d-https-pass)"           LIVE_S79D_EVIDENCE_PATH="$GITHUB_WORKSPACE/s79d-negative-evidence.txt"             gradle -p liliya-core :license-transport-client:test               --tests "pro.liliya.core.licensetransport.LicenseS79dServiceStatePolicyAcceptanceTest.tampered_backend_proof_is_rejected_before_state_acceptance"               --rerun-tasks --console=plain
+
+          grep -F 'LICENSING_S7_9D_NEGATIVE_EVIDENCE=' s79d-negative-evidence.txt
+          REPLAY="$(docker exec -e PGPASSWORD="$(cat .s79d-pg-runtime)" liliya-s79d-postgres             psql -At -U liliya_s79d_runtime -d liliya_s79d             -c "SELECT replay_sequence FROM licensing_decision_state WHERE subject='s7-9d-service-state-subject' AND product_id='liliya-pro'")"
+          test "$REPLAY" = "1"
+
+      - name: Frozen Core rejects wrong identity profile and tampered payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE_S79D_PHASE=negative-hardening           LIVE_S79D_LICENSE_ENDPOINT=https://127.0.0.1:18633/v1/license           LIVE_S79D_SERVICE_STATE_ENDPOINT=https://127.0.0.1:18633/v1/license/service-state           LIVE_S79D_BEARER="$(cat .s79d-auth)"           LIVE_S79D_ENTITLEMENT_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-entitlement-public.der"           LIVE_S79D_SERVICE_STATE_PUBLIC_KEY_DER_PATH="$GITHUB_WORKSPACE/.s79d-service-state-public.der"           LIVE_S79D_SERVICE_STATE_KEY_ID=s7-9d-service-state-key           LIVE_S79D_TRUSTSTORE_PATH="$GITHUB_WORKSPACE/.s79d-https/truststore.p12"           LIVE_S79D_TRUSTSTORE_PASSWORD="$(cat .s79d-https-pass)"           LIVE_S79D_EVIDENCE_PATH="$GITHUB_WORKSPACE/s79d-hardening-evidence.txt"             gradle -p liliya-core :license-transport-client:test               --tests "pro.liliya.core.licensetransport.LicenseS79dServiceStatePolicyAcceptanceTest.backend_service_state_identity_profile_and_payload_tampering_fail_closed"               --rerun-tasks --console=plain
+
+          grep -F 'LICENSING_S7_9D_HARDENING_EVIDENCE=' s79d-hardening-evidence.txt
+
+      - name: Production profile and privacy guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R -n -F 'TEST-SERVICE-SHA256'             issuer-core/src/main issuer-postgres/src/main issuer-openbao-transit/src/main             issuer-transport-contract/src/main issuer-http-endpoint/src/main             issuer-https-listener/src/main issuer-deployment/src/main
+
+          ! grep -F 's7-9d-service-state-subject' s79d-service.log
+          ! grep -F 's7-9d-state-' s79d-service.log
+          ! grep -F "$(cat .s79d-auth)" s79d-service.log
+          ! grep -F "$(cat .s79d-ob-token)" s79d-service.log
+          docker exec liliya-s79d-openbao sh -c 'test -s /openbao/audit/openbao-audit.log'
+
+          echo 'LICENSING_S7_9D_EVIDENCE={"frozenEntitlementWireUnchanged":true,"separateServiceStateChannel":true,"requestAuthBeforeStateRead":true,"postgresAuthoritativeState":true,"serviceStateReadOnly":true,"productionServiceStateProfile":true,"testProofProfileRejectedForProduction":true,"exactOpenBaoKeyVersion":true,"frozenStateVerification":true,"policyContextAvailable":true,"licensePolicyEntitled":true,"staleStateRejected":true,"staleEntitlementReplayDenied":true,"tamperRejected":true,"unknownKeyRejected":true,"unsupportedProfileRejected":true,"tamperedPayloadRejected":true,"hiddenRetry":false,"stoppedBeforeAuthorityExecution":true}'
+          echo "=== S7.9D SERVICE-STATE LICENSEPOLICY ACCEPTANCE PASS ==="
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .s79d-service-pid ]]; then
+            kill -TERM "$(cat .s79d-service-pid)" >/dev/null 2>&1 || true
+          fi
+          docker rm -f liliya-s79d-postgres liliya-s79d-openbao >/dev/null 2>&1 || true
+          docker volume rm liliya-s79d-postgres-data liliya-s79d-openbao-data liliya-s79d-openbao-audit >/dev/null 2>&1 || true
+          rm -rf .s79d-ob .s79d-https
+          rm -f .s79d-* s79d-*.log s79d-*-evidence.txt
