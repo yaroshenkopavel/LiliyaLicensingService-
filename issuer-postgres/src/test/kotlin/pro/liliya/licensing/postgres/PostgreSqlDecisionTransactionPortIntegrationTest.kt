@@ -7,6 +7,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -33,6 +34,35 @@ class PostgreSqlDecisionTransactionPortIntegrationTest {
     @AfterTest
     fun tearDown() {
         port.deleteForTest(scope)
+    }
+
+    @Test
+    fun empty_legacy_schema_is_upgraded_without_fabricating_authoritative_data() {
+        recreateLegacySchema(withAuthoritativeRow = false)
+
+        val migrated = PostgreSqlDecisionTransactionPort(dataSource())
+        migrated.initializeSchema()
+
+        val committed = migrated.transact(scope) {
+            DecisionCandidate(DecisionState(0, 1), envelope(0))
+        }
+
+        assertIs<DecisionTransactionResult.Committed>(committed)
+        val reopened = assertNotNull(migrated.inspect(scope))
+        assertEquals(1L, reopened.envelope.schemaVersion.value)
+        assertEquals("TEST-ED25519", reopened.envelope.algorithm.value)
+    }
+
+    @Test
+    fun populated_legacy_schema_fails_closed_and_requires_explicit_offline_migration() {
+        recreateLegacySchema(withAuthoritativeRow = true)
+
+        val failure = assertFailsWith<IllegalStateException> {
+            PostgreSqlDecisionTransactionPort(dataSource()).initializeSchema()
+        }
+
+        assertTrue("explicit offline migration is required" in failure.message.orEmpty())
+        assertEquals(1L, legacyRowCount())
     }
 
     @Test
@@ -151,6 +181,53 @@ class PostgreSqlDecisionTransactionPortIntegrationTest {
         assertEquals(workers, results.count { it is DecisionTransactionResult.Committed })
         assertEquals((workers - 1).toLong(), port.inspect(scope)?.state?.replaySequence)
     }
+
+    private fun recreateLegacySchema(withAuthoritativeRow: Boolean) {
+        dataSource().connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("DROP TABLE IF EXISTS licensing_decision_state")
+                statement.execute(
+                    """
+                    CREATE TABLE licensing_decision_state (
+                        subject TEXT NOT NULL,
+                        product_id TEXT NOT NULL,
+                        replay_sequence BIGINT NOT NULL CHECK (replay_sequence >= 0),
+                        revocation_epoch BIGINT NOT NULL CHECK (revocation_epoch >= 0),
+                        signing_key_reference TEXT NOT NULL CHECK (length(signing_key_reference) > 0),
+                        canonical_payload BYTEA NOT NULL CHECK (octet_length(canonical_payload) > 0),
+                        signature BYTEA NOT NULL CHECK (octet_length(signature) > 0),
+                        PRIMARY KEY (subject, product_id)
+                    )
+                    """.trimIndent()
+                )
+                if (withAuthoritativeRow) {
+                    statement.executeUpdate(
+                        """
+                        INSERT INTO licensing_decision_state(
+                            subject, product_id, replay_sequence, revocation_epoch,
+                            signing_key_reference, canonical_payload, signature
+                        ) VALUES (
+                            'subject-s5-4', 'product-s5-4', 4, 9,
+                            'legacy-key', decode('01', 'hex'), decode('02', 'hex')
+                        )
+                        """.trimIndent()
+                    )
+                }
+            }
+        }
+    }
+
+    private fun legacyRowCount(): Long =
+        dataSource().connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    "SELECT COUNT(*) FROM licensing_decision_state"
+                ).use { result ->
+                    assertTrue(result.next())
+                    result.getLong(1)
+                }
+            }
+        }
 
     private fun envelope(sequence: Long) = SignedLicenseEnvelope(
         pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion(1),
