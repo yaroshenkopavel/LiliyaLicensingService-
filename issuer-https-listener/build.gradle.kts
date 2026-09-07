@@ -48,4 +48,14 @@ tasks.register<JavaExec>("runS78StagingHttpsAcceptanceHost") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("pro.liliya.licensing.https.S78StagingHttpsAcceptanceHostKt")
+
+    val trustStorePath = providers.environmentVariable("S7_8_OPENBAO_TRUSTSTORE_PATH").orNull
+    val trustStorePassword = providers.environmentVariable("S7_8_OPENBAO_TRUSTSTORE_PASSWORD").orNull
+    if (!trustStorePath.isNullOrBlank() && !trustStorePassword.isNullOrBlank()) {
+        jvmArgs(
+            "-Djavax.net.ssl.trustStore=$trustStorePath",
+            "-Djavax.net.ssl.trustStoreType=PKCS12",
+            "-Djavax.net.ssl.trustStorePassword=$trustStorePassword"
+        )
+    }
 }
