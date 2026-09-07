@@ -50,7 +50,9 @@ data class LicensingDeploymentConfig(
     val postgresUsername: String,
     val postgresPassword: DeploymentSecret,
     val openBaoToken: DeploymentSecret,
-    val requestAuthenticationSecret: DeploymentSecret
+    val requestAuthenticationIdentityReference: String,
+    val requestAuthenticationSecret: DeploymentSecret,
+    val tlsIdentityReference: String
 ) : AutoCloseable {
     init {
         require(listenerHost.isNotBlank()) { "listener host must not be blank" }
@@ -63,6 +65,12 @@ data class LicensingDeploymentConfig(
         }
         require(openBaoKeyReference.isNotBlank()) { "OpenBao key reference must not be blank" }
         require(postgresUsername.isNotBlank()) { "PostgreSQL username must not be blank" }
+        require(requestAuthenticationIdentityReference.isNotBlank()) {
+            "request-authentication identity reference must not be blank"
+        }
+        require(tlsIdentityReference.isNotBlank()) {
+            "TLS identity reference must not be blank"
+        }
     }
 
     override fun close() {
@@ -78,12 +86,22 @@ data class LicensingDeploymentConfig(
             ",postgresJdbcUrl=<redacted>,openBaoAddress=<redacted>," +
             "openBaoKeyReference=" + openBaoKeyReference +
             ",postgresUsername=<redacted>,postgresPassword=<redacted>," +
-            "openBaoToken=<redacted>,requestAuthenticationSecret=<redacted>)"
+            "openBaoToken=<redacted>,requestAuthenticationIdentityReference=<redacted>," +
+            "requestAuthenticationSecret=<redacted>,tlsIdentityReference=<redacted>)"
 
     fun structuralSummary(): String =
         "environment=" + environment +
             ",listener=" + listenerHost + ":" + listenerPort +
-            ",postgresConfigured=true,openBaoConfigured=true,requestAuthConfigured=true"
+            ",postgresConfigured=true,openBaoConfigured=true,requestAuthConfigured=true,tlsConfigured=true"
+
+    fun identityProfile(): LicensingEnvironmentIdentityProfile =
+        LicensingEnvironmentIdentityProfile(
+            environment = environment,
+            postgresIdentity = postgresUsername,
+            openBaoKeyIdentity = openBaoKeyReference,
+            requestAuthenticationIdentity = requestAuthenticationIdentityReference,
+            tlsIdentity = tlsIdentityReference
+        )
 }
 
 enum class DeploymentConfigKey(val environmentName: String, val secret: Boolean) {
@@ -96,7 +114,9 @@ enum class DeploymentConfigKey(val environmentName: String, val secret: Boolean)
     OPENBAO_ADDRESS("LILIYA_OPENBAO_ADDRESS", false),
     OPENBAO_KEY_REFERENCE("LILIYA_OPENBAO_KEY_REFERENCE", false),
     OPENBAO_TOKEN("LILIYA_OPENBAO_TOKEN", true),
-    REQUEST_AUTH_SECRET("LILIYA_REQUEST_AUTH_SECRET", true)
+    REQUEST_AUTH_IDENTITY_REFERENCE("LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE", false),
+    REQUEST_AUTH_SECRET("LILIYA_REQUEST_AUTH_SECRET", true),
+    TLS_IDENTITY_REFERENCE("LILIYA_TLS_IDENTITY_REFERENCE", false)
 }
 
 fun interface DeploymentEnvironmentSource {
@@ -178,6 +198,18 @@ class LicensingDeploymentConfigLoader(
         val openBaoKeyReference = values.getValue(DeploymentConfigKey.OPENBAO_KEY_REFERENCE)
         if (openBaoKeyReference.isBlank()) return invalid(DeploymentConfigKey.OPENBAO_KEY_REFERENCE)
 
+        val requestAuthenticationIdentityReference =
+            values.getValue(DeploymentConfigKey.REQUEST_AUTH_IDENTITY_REFERENCE)
+        if (requestAuthenticationIdentityReference.isBlank()) {
+            return invalid(DeploymentConfigKey.REQUEST_AUTH_IDENTITY_REFERENCE)
+        }
+
+        val tlsIdentityReference =
+            values.getValue(DeploymentConfigKey.TLS_IDENTITY_REFERENCE)
+        if (tlsIdentityReference.isBlank()) {
+            return invalid(DeploymentConfigKey.TLS_IDENTITY_REFERENCE)
+        }
+
         return DeploymentConfigLoadResult.Loaded(
             LicensingDeploymentConfig(
                 environment = environment,
@@ -189,7 +221,9 @@ class LicensingDeploymentConfigLoader(
                 openBaoAddress = openBaoAddress,
                 openBaoKeyReference = openBaoKeyReference,
                 openBaoToken = secret(values.getValue(DeploymentConfigKey.OPENBAO_TOKEN)),
-                requestAuthenticationSecret = secret(values.getValue(DeploymentConfigKey.REQUEST_AUTH_SECRET))
+                requestAuthenticationIdentityReference = requestAuthenticationIdentityReference,
+                requestAuthenticationSecret = secret(values.getValue(DeploymentConfigKey.REQUEST_AUTH_SECRET)),
+                tlsIdentityReference = tlsIdentityReference
             )
         )
     }
