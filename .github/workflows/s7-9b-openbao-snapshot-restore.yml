@@ -1,0 +1,33 @@
+name: S7.9B OpenBao Raft Snapshot Restore
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-9b-openbao-snapshot-restore-v0.1"
+  pull_request:
+    paths:
+      - "scripts/run-s7-9b-openbao-snapshot-restore.sh"
+      - ".github/workflows/s7-9b-openbao-snapshot-restore.yml"
+      - "scripts/run-s7-4-openbao-nondev-acceptance.sh"
+      - "issuer-openbao-transit/**"
+
+permissions:
+  contents: read
+
+jobs:
+  openbao-snapshot-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Run integrated-Raft snapshot restore acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./scripts/run-s7-9b-openbao-snapshot-restore.sh 2>&1 | tee s7-9b-openbao-recovery.log
+          grep -F 'LICENSING_S7_9B_EVIDENCE=' s7-9b-openbao-recovery.log
+          grep -F '=== S7.9B OPENBAO RAFT SNAPSHOT RESTORE PASS ===' s7-9b-openbao-recovery.log
