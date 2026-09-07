@@ -13,6 +13,7 @@ application {
 
 dependencies {
     implementation(project(":issuer-runtime"))
+    implementation(project(":issuer-observability"))
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
