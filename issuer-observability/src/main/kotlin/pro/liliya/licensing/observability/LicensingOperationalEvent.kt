@@ -40,7 +40,9 @@ enum class LicensingOperationalDetailCode {
     OPENBAO_ADDRESS,
     OPENBAO_KEY_REFERENCE,
     OPENBAO_TOKEN,
-    REQUEST_AUTH_SECRET
+    REQUEST_AUTH_IDENTITY_REFERENCE,
+    REQUEST_AUTH_SECRET,
+    TLS_IDENTITY_REFERENCE
 }
 
 enum class LicensingOperationalReasonCode {
