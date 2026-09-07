@@ -78,6 +78,16 @@ class GcpKmsLiveAcceptanceTest {
                 unavailableSigner.sign(payload, logicalKey)
             )
             assertEquals(SigningFailure.KEY_UNAVAILABLE, unavailable.reason)
+
+            println(
+                "LICENSING_S5_6_KMS_EVIDENCE=" +
+                    "{\"algorithm\":true," +
+                    "\"realKmsSignature\":true," +
+                    "\"publicKeyVerification\":true," +
+                    "\"tamperRejected\":true," +
+                    "\"missingExactKeyRejected\":true," +
+                    "\"noFallback\":true}"
+            )
         }
     }
 
