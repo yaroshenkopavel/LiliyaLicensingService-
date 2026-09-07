@@ -28,8 +28,8 @@ object LicenseWireJsonCodec {
         return json.writeValueAsBytes(root)
     }
 
-    fun decodeRequest(bytes: ByteArray): LicenseWireDecodeResult<LicenseWireRequest.ServiceRequest> =
-        try {
+    fun decodeRequest(bytes: ByteArray): LicenseWireDecodeResult<LicenseWireRequest.ServiceRequest> {
+        return try {
             val root = json.readTree(bytes)
             if (!validWireRoot(root, "request")) {
                 return LicenseWireDecodeResult.Rejected(
@@ -60,6 +60,7 @@ object LicenseWireJsonCodec {
         } catch (_: Exception) {
             LicenseWireDecodeResult.Rejected(LicenseTransportFailure.PROTOCOL_FAILURE)
         }
+    }
 
     fun encodeResponse(response: LicenseWireResponse): ByteArray {
         val root = json.createObjectNode()
@@ -91,8 +92,8 @@ object LicenseWireJsonCodec {
         return json.writeValueAsBytes(root)
     }
 
-    fun decodeResponse(bytes: ByteArray): LicenseWireDecodeResult<LicenseWireResponse> =
-        try {
+    fun decodeResponse(bytes: ByteArray): LicenseWireDecodeResult<LicenseWireResponse> {
+        return try {
             val root = json.readTree(bytes)
             val wireVersion = requiredInt(root, "wireVersion")
             if (wireVersion != currentVersion.value) {
@@ -145,6 +146,7 @@ object LicenseWireJsonCodec {
         } catch (_: Exception) {
             LicenseWireDecodeResult.Rejected(LicenseTransportFailure.PROTOCOL_FAILURE)
         }
+    }
 
     private fun validWireRoot(root: JsonNode, kind: String): Boolean =
         root.isObject &&
