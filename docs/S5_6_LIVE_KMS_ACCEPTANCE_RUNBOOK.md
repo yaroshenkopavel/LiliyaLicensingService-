@@ -1,124 +1,138 @@
-# S5.6 Live Cloud KMS Acceptance Runbook
+# S5.6 Live Cloud KMS + Frozen Client Acceptance Runbook
 
 Status: **READY TO EXECUTE / COST-BEARING RESOURCE CREATION REQUIRES HUMAN APPROVAL**
 
-Canonical candidate head:
+The live gate now proves both:
 
-`0b4b3c9a7826839b49cfed7cb7f3cdbd4ea194fa`
+1. real backend Cloud KMS signing;
+2. exact backend-issued envelope compatibility with frozen LiliyaCore.
 
 ## 1. Preconditions
 
-The live acceptance must run against an exact Google Cloud KMS asymmetric signing key version using:
+Required backend branch:
+
+`licensing/s5-6-gcp-kms-profile-v0.1`
+
+Required LiliyaCore main:
+
+`5a4f0c82a64eec11230bdd5afc322d647071f90a`
+
+Required KMS key version algorithm:
 
 `EC_SIGN_P256_SHA256`
 
-The test runner never creates or deletes cloud resources.
-
-The repository script:
+The repository runner:
 
 `scripts/run-live-gcp-kms-acceptance.sh`
 
-only:
+does not create or delete cloud resources.
 
-- describes the supplied exact CryptoKeyVersion;
-- verifies algorithm and ENABLED state;
-- verifies Application Default Credentials are available;
-- runs the opt-in Gradle live integration test.
+It:
+
+- validates the exact KMS CryptoKeyVersion;
+- signs one real canonical LicenseEntitlement;
+- verifies the KMS signature with the KMS public key;
+- proves payload tamper rejection;
+- proves a missing exact KMS version fails closed;
+- writes a local evidence bundle;
+- optionally passes that exact backend evidence bundle into the frozen LiliyaCore live compatibility test.
 
 ## 2. Existing-key path
 
 If an eligible non-production KMS CryptoKeyVersion already exists:
 
 ```bash
-git clone --branch licensing/s5-6-gcp-kms-profile-v0.1 \
-  https://github.com/yaroshenkopavel/LiliyaLicensingService-.git
-cd LiliyaLicensingService-
+rm -rf ~/liliya-licensing-live ~/liliya-core-live
 
-git rev-parse HEAD
-# MUST equal:
-# 0b4b3c9a7826839b49cfed7cb7f3cdbd4ea194fa
+gh repo clone yaroshenkopavel/LiliyaLicensingService- ~/liliya-licensing-live
+git -C ~/liliya-licensing-live checkout licensing/s5-6-gcp-kms-profile-v0.1
+
+gh repo clone yaroshenkopavel/LiliyaCore- ~/liliya-core-live
+git -C ~/liliya-core-live checkout 5a4f0c82a64eec11230bdd5afc322d647071f90a
 
 gcloud auth application-default login
 
+cd ~/liliya-licensing-live
+
 ./scripts/run-live-gcp-kms-acceptance.sh \
-  projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY_NAME/cryptoKeyVersions/VERSION
+  projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY_NAME/cryptoKeyVersions/VERSION \
+  ~/liliya-core-live
 ```
 
-Do not continue if the checked-out SHA differs.
+Before execution, record:
+
+`git -C ~/liliya-licensing-live rev-parse HEAD`
+
+That exact SHA is the backend acceptance candidate and must match the canonical project checkpoint.
 
 ## 3. Temporary-key path
 
-Creating a Cloud KMS key ring/key/key version can incur cloud charges and therefore must be a human-approved action.
+Creating a Cloud KMS key ring/key/key version can incur cloud charges and therefore requires
+explicit human approval.
 
 Recommended test-only naming:
 
-- key ring: `liliya-licensing-s5-live`;
-- key: `license-signing-test`;
+- key ring: `liliya-licensing-dev`;
+- key: `license-signing-s5`;
 - purpose: asymmetric signing;
 - algorithm: `ec-sign-p256-sha256`.
 
-Example commands are intentionally not executed by repository automation:
+No production key should be used for development acceptance.
 
-```bash
-PROJECT_ID="$(gcloud config get-value project)"
-LOCATION="<reviewed-location>"
+## 4. Required backend evidence
 
-gcloud kms keyrings create liliya-licensing-s5-live \
-  --project="$PROJECT_ID" \
-  --location="$LOCATION"
+The backend live test must emit:
 
-gcloud kms keys create license-signing-test \
-  --project="$PROJECT_ID" \
-  --location="$LOCATION" \
-  --keyring=liliya-licensing-s5-live \
-  --purpose=asymmetric-signing \
-  --default-algorithm=ec-sign-p256-sha256
+`LICENSING_S5_6_KMS_EVIDENCE={"algorithm":true,"realKmsSignature":true,"publicKeyVerification":true,"tamperRejected":true,"missingExactKeyRejected":true,"noFallback":true}`
 
-KEY_VERSION="$(
-  gcloud kms keys versions list \
-    --project="$PROJECT_ID" \
-    --location="$LOCATION" \
-    --keyring=liliya-licensing-s5-live \
-    --key=license-signing-test \
-    --filter='state=ENABLED' \
-    --sort-by='~name' \
-    --limit=1 \
-    --format='value(name)'
-)"
+It must also produce a local properties evidence bundle containing:
 
-echo "$KEY_VERSION"
-```
+- schemaVersion;
+- algorithm;
+- logical keyReference;
+- canonical entitlement payload;
+- KMS signature;
+- KMS public key DER.
 
-Review the printed exact resource name before passing it to the acceptance runner.
+The runner prints only non-secret structural metadata. It intentionally does not print the raw
+payload/signature/public-key byte fields.
 
-## 4. Required PASS evidence
+## 5. Required cross-repository evidence
 
-The live test must prove:
+When the LiliyaCore checkout is passed as the second argument, the runner must emit:
 
-1. exact key version reports `EC_SIGN_P256_SHA256`;
-2. exact canonical payload is signed by Cloud KMS;
-3. KMS public key verifies the returned ECDSA signature;
-4. one-byte payload mutation fails verification;
-5. a deliberately nonexistent exact CryptoKeyVersion fails as `KEY_UNAVAILABLE`;
-6. no older configured key is attempted as fallback.
+`LICENSING_S5_7_CROSS_REPO_EVIDENCE={"backendIssuedEnvelope":true,"frozenVerifier":true,"serviceState":true,"policyContext":true,"licensePolicy":true,"stoppedBeforeAuthority":true}`
 
-Expected final runner marker:
+The frozen client test must consume the exact backend evidence file. It must not reconstruct or
+re-sign the entitlement independently.
+
+## 6. Required final marker
+
+The complete live gate ends with:
 
 `=== LIVE GCP KMS ACCEPTANCE PASS ===`
 
-## 5. Merge rule
+A backend-only KMS PASS without the cross-repository gate is insufficient for final Slice 5
+acceptance section K.
+
+## 7. Merge rule
 
 PR #6 must not be merged merely because ordinary CI is GREEN.
 
 Merge only after:
 
-- ordinary exact-head Backend CI: GREEN;
-- Secret Guard: GREEN;
-- live KMS test: PASS;
-- evidence is recorded in the canonical project documentation.
+- exact-head Backend CI: GREEN;
+- exact-head Secret Guard: GREEN;
+- real KMS backend evidence: PASS;
+- cross-repository frozen LiliyaCore evidence: PASS;
+- physical evidence is recorded in canonical documentation.
 
-## 6. Cleanup
+## 8. Cleanup / retention
 
-Cloud KMS key material is intentionally not exportable. Key/version destruction has delayed and provider-specific lifecycle semantics. Do not treat cleanup as equivalent to deleting a local file.
+The runner does not destroy KMS resources.
 
-For a temporary test resource, disable the test key version after acceptance if the reviewed operational policy requires it. Do not destroy a key version required by recorded acceptance evidence until its retention policy is decided.
+Cloud KMS private material is non-exportable. A temporary test key version may be disabled after
+acceptance according to the reviewed test-resource retention policy.
+
+Do not destroy evidence-required key versions until the acceptance record and retention decision are
+complete.
