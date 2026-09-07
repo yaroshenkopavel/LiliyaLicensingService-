@@ -15,9 +15,10 @@ class LicenseHttpEndpointPrivacyContractTest {
     @Test
     fun request_and_response_rendering_never_expose_body_content() {
         val marker = "PRIVATE-HTTP-BODY-MARKER"
+        val privatePathMarker = "PRIVATE-HTTP-PATH-MARKER"
         val request = LicenseHttpRequest(
             method = LicenseHttpMethod.POST,
-            path = LicenseHttpEndpoint.PATH,
+            path = "/private/" + privatePathMarker,
             body = marker.encodeToByteArray()
         )
         val response = LicenseHttpResponse(
@@ -27,7 +28,9 @@ class LicenseHttpEndpointPrivacyContractTest {
         )
 
         assertFalse(marker in request.toString())
+        assertFalse(privatePathMarker in request.toString())
         assertFalse(marker in response.toString())
+        assertTrue("path=<redacted>" in request.toString())
         assertTrue("body=<redacted>" in request.toString())
         assertTrue("body=<redacted>" in response.toString())
     }
