@@ -114,16 +114,19 @@ object ProductionTlsContextLoader {
 class ProductionHttpsListener(
     private val config: ProductionHttpsConfig,
     private val handler: LicenseHttpsHandler,
+    private val readiness: () -> Boolean,
     private val sslContextProvider: () -> SSLContext = {
         ProductionTlsContextLoader.load(config)
     }
 ) : LicensingRuntimeListener {
     constructor(
         config: ProductionHttpsConfig,
-        endpoint: AuthenticatedLicenseHttpEndpoint
+        endpoint: AuthenticatedLicenseHttpEndpoint,
+        readiness: () -> Boolean
     ) : this(
         config = config,
-        handler = LicenseHttpsHandler(endpoint::handle)
+        handler = LicenseHttpsHandler(endpoint::handle),
+        readiness = readiness
     )
 
     private val lock = Any()
@@ -197,9 +200,14 @@ class ProductionHttpsListener(
 
             createdServer.createContext("/health/ready") { exchange ->
                 try {
-                    val body = "{\"status\":\"ready\"}".encodeToByteArray()
+                    val ready = readiness()
+                    val body = if (ready) {
+                        "{\"status\":\"ready\"}".encodeToByteArray()
+                    } else {
+                        "{\"status\":\"not-ready\"}".encodeToByteArray()
+                    }
                     exchange.responseHeaders.set("Content-Type", "application/json")
-                    exchange.sendResponseHeaders(200, body.size.toLong())
+                    exchange.sendResponseHeaders(if (ready) 200 else 503, body.size.toLong())
                     exchange.responseBody.use { it.write(body) }
                 } finally {
                     exchange.close()
@@ -225,7 +233,8 @@ class ProductionHttpsListener(
 
     override fun toString(): String =
         "ProductionHttpsListener(config=" + config +
-            ",handler=<redacted>,tls=<redacted>,started=" + (server != null) + ")"
+            ",handler=<redacted>,readiness=<redacted>,tls=<redacted>,started=" +
+            (server != null) + ")"
 
     private fun bearerCredential(header: String?): RequestAuthenticationCredential? {
         if (header == null) return null
