@@ -20,8 +20,7 @@ data class LicenseHttpRequest(
 ) {
     override fun toString(): String =
         "LicenseHttpRequest(method=" + method +
-            ",path=" + path +
-            ",body=<redacted>)"
+            ",path=<redacted>,body=<redacted>)"
 }
 
 data class LicenseHttpResponse(
