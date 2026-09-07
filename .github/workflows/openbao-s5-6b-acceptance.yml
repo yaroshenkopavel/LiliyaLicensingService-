@@ -1,0 +1,50 @@
+name: OpenBao S5.6B Acceptance
+
+on:
+  push:
+    branches:
+      - "licensing/s5-6b-openbao-transit-v0.1"
+  pull_request:
+    paths:
+      - "issuer-openbao-transit/**"
+      - "scripts/run-live-openbao-transit-acceptance.sh"
+      - ".github/workflows/openbao-s5-6b-acceptance.yml"
+      - "settings.gradle.kts"
+
+permissions:
+  contents: read
+
+jobs:
+  cross-repo-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - name: Checkout frozen LiliyaCore
+        uses: actions/checkout@v4
+        with:
+          repository: yaroshenkopavel/LiliyaCore-
+          ref: 5a4f0c82a64eec11230bdd5afc322d647071f90a
+          path: liliya-core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Run free OpenBao Transit cross-repository acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/run-live-openbao-transit-acceptance.sh "$GITHUB_WORKSPACE/liliya-core"             2>&1 | tee openbao-s5-6b-acceptance.log
+
+          grep -F 'LICENSING_S5_6B_OPENBAO_EVIDENCE='             openbao-s5-6b-acceptance.log
+          grep -F 'LICENSING_S5_7_CROSS_REPO_EVIDENCE='             openbao-s5-6b-acceptance.log
+          grep -F '=== LIVE OPENBAO TRANSIT ACCEPTANCE PASS ==='             openbao-s5-6b-acceptance.log

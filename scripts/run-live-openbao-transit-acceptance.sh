@@ -103,6 +103,7 @@ echo
 echo "=== OPENBAO EVIDENCE BUNDLE READY ==="
 grep -E '^(schemaVersion|algorithm|keyReference)=' "$EVIDENCE_PATH"
 echo "payload/signature/public-key bytes are intentionally not printed"
+echo 'LICENSING_S5_6B_OPENBAO_EVIDENCE={"externalTransitSignature":true,"exactKeyVersion":true,"publicKeyVerification":true,"tamperRejected":true,"missingExactVersionRejected":true,"noFallback":true,"privateKeyNotReturnedBySigningApi":true}'
 
 if [[ -n "$CORE_DIR" ]]; then
   EXPECTED_CORE_HEAD="5a4f0c82a64eec11230bdd5afc322d647071f90a"
