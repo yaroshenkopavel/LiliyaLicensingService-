@@ -77,5 +77,9 @@ private fun DeploymentConfigKey.toOperationalDetail(): LicensingOperationalDetai
         DeploymentConfigKey.OPENBAO_ADDRESS -> LicensingOperationalDetailCode.OPENBAO_ADDRESS
         DeploymentConfigKey.OPENBAO_KEY_REFERENCE -> LicensingOperationalDetailCode.OPENBAO_KEY_REFERENCE
         DeploymentConfigKey.OPENBAO_TOKEN -> LicensingOperationalDetailCode.OPENBAO_TOKEN
+        DeploymentConfigKey.REQUEST_AUTH_IDENTITY_REFERENCE ->
+            LicensingOperationalDetailCode.REQUEST_AUTH_IDENTITY_REFERENCE
         DeploymentConfigKey.REQUEST_AUTH_SECRET -> LicensingOperationalDetailCode.REQUEST_AUTH_SECRET
+        DeploymentConfigKey.TLS_IDENTITY_REFERENCE ->
+            LicensingOperationalDetailCode.TLS_IDENTITY_REFERENCE
     }
