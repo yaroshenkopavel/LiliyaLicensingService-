@@ -129,6 +129,22 @@ class LicenseS79dServiceStatePolicyAcceptanceTest {
             )
         ).context
 
+        val staleEntitlement = assertIs<LicenseDecision.Denied>(
+            LicensePolicy().evaluate(
+                verified = verifiedEntitlement,
+                request = LicensePolicyRequest(
+                    productId = LicenseProductId("liliya-pro"),
+                    feature = LicenseFeature("model.local"),
+                    subject = LicenseSubject("s7-9d-service-state-subject")
+                ),
+                context = context
+            )
+        )
+        assertEquals(
+            pro.liliya.core.license.LicenseDenialReason.STALE_REPLAY_SEQUENCE,
+            staleEntitlement.reason
+        )
+
         val decision = assertIs<LicenseDecision.Entitled>(
             LicensePolicy().evaluate(
                 verified = refreshedEntitlement,
@@ -147,8 +163,8 @@ class LicenseS79dServiceStatePolicyAcceptanceTest {
                 "{\"backendServiceState\":true,\"productionProfile\":true," +
                 "\"frozenStateVerification\":true,\"serviceStateReplayZero\":true," +
                 "\"serviceStateReplayOne\":true,\"staleBackendStateRejected\":true," +
-                "\"policyContextAvailable\":true,\"licensePolicyEntitled\":true," +
-                "\"stoppedBeforeAuthorityExecution\":true}"
+                "\"staleEntitlementReplayDenied\":true,\"policyContextAvailable\":true," +
+                "\"licensePolicyEntitled\":true,\"stoppedBeforeAuthorityExecution\":true}"
         )
     }
 
