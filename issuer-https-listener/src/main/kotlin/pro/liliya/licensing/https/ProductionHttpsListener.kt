@@ -1,5 +1,6 @@
 package pro.liliya.licensing.https
 
+import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpsConfigurator
 import com.sun.net.httpserver.HttpsServer
 import java.net.InetSocketAddress
@@ -12,6 +13,7 @@ import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
+import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpMethod
 import pro.liliya.licensing.http.LicenseHttpRequest
 import pro.liliya.licensing.http.LicenseHttpResponse
@@ -147,55 +149,11 @@ class ProductionHttpsListener(
             createdServer.httpsConfigurator = HttpsConfigurator(sslContextProvider())
             createdServer.executor = createdExecutor
 
-            createdServer.createContext("/v1/license") { exchange ->
-                try {
-                    val bytes = exchange.requestBody.use { input ->
-                        input.readNBytes(config.maxRequestBytes + 1)
-                    }
-                    if (bytes.size > config.maxRequestBytes) {
-                        exchange.sendResponseHeaders(413, -1)
-                        return@createContext
-                    }
-
-                    val authentication = bearerCredential(
-                        exchange.requestHeaders.getFirst("Authorization")
-                    )
-                    val response = handler.handle(
-                        LicenseHttpRequest(
-                            method = if (exchange.requestMethod == "POST") {
-                                LicenseHttpMethod.POST
-                            } else {
-                                LicenseHttpMethod.GET
-                            },
-                            path = exchange.requestURI.path,
-                            body = bytes,
-                            authentication = authentication
-                        )
-                    )
-
-                    response.contentType?.let {
-                        exchange.responseHeaders.set("Content-Type", it)
-                    }
-                    if (response.body.isEmpty()) {
-                        exchange.sendResponseHeaders(response.status, -1)
-                    } else {
-                        exchange.sendResponseHeaders(
-                            response.status,
-                            response.body.size.toLong()
-                        )
-                        exchange.responseBody.use { output ->
-                            output.write(response.body)
-                        }
-                    }
-                } catch (_: Exception) {
-                    runCatching {
-                        if (exchange.responseCode == -1) {
-                            exchange.sendResponseHeaders(500, -1)
-                        }
-                    }
-                } finally {
-                    exchange.close()
-                }
+            createdServer.createContext(LicenseHttpEndpoint.PATH) { exchange ->
+                handleRequest(exchange)
+            }
+            createdServer.createContext(AuthenticatedServiceStateHttpEndpoint.PATH) { exchange ->
+                handleRequest(exchange)
             }
 
             createdServer.createContext("/health/ready") { exchange ->
@@ -221,6 +179,57 @@ class ProductionHttpsListener(
         } catch (_: Exception) {
             createdExecutor.shutdownNow()
             LicensingRuntimeListenerResult.Failed
+        }
+    }
+
+    private fun handleRequest(exchange: HttpExchange) {
+        try {
+            val bytes = exchange.requestBody.use { input ->
+                input.readNBytes(config.maxRequestBytes + 1)
+            }
+            if (bytes.size > config.maxRequestBytes) {
+                exchange.sendResponseHeaders(413, -1)
+                return
+            }
+
+            val authentication = bearerCredential(
+                exchange.requestHeaders.getFirst("Authorization")
+            )
+            val response = handler.handle(
+                LicenseHttpRequest(
+                    method = if (exchange.requestMethod == "POST") {
+                        LicenseHttpMethod.POST
+                    } else {
+                        LicenseHttpMethod.GET
+                    },
+                    path = exchange.requestURI.path,
+                    body = bytes,
+                    authentication = authentication
+                )
+            )
+
+            response.contentType?.let {
+                exchange.responseHeaders.set("Content-Type", it)
+            }
+            if (response.body.isEmpty()) {
+                exchange.sendResponseHeaders(response.status, -1)
+            } else {
+                exchange.sendResponseHeaders(
+                    response.status,
+                    response.body.size.toLong()
+                )
+                exchange.responseBody.use { output ->
+                    output.write(response.body)
+                }
+            }
+        } catch (_: Exception) {
+            runCatching {
+                if (exchange.responseCode == -1) {
+                    exchange.sendResponseHeaders(500, -1)
+                }
+            }
+        } finally {
+            exchange.close()
         }
     }
 
