@@ -104,6 +104,14 @@ listener "tcp" {
 
 api_addr     = "https://127.0.0.1:8200"
 cluster_addr = "https://127.0.0.1:8201"
+
+audit "file" "liliya-file" {
+  description = "Liliya S7.4 structural audit acceptance"
+  options {
+    file_path = "/openbao/audit/openbao-audit.log"
+    mode      = "0600"
+  }
+}
 EOF
 
 
@@ -176,8 +184,11 @@ APP_TOKEN="$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.auth.client_token // empty'
 unset TOKEN_RESPONSE
 [[ -n "$APP_TOKEN" ]] || { echo "Failed to create least-privilege runtime token" >&2; exit 1; }
 
-echo "S7.4 stage: enable audit device"
-curl -fsS --cacert "$WORK_DIR/tls/ca.crt"   -H "X-Vault-Token: $ROOT_TOKEN"   -H "Content-Type: application/json"   -X PUT   -d '{"type":"file","options":{"file_path":"/openbao/audit/openbao-audit.log"}}'   "$OPENBAO_ADDR/v1/sys/audit/file" >/dev/null
+echo "S7.4 stage: verify declarative audit device"
+AUDIT_LIST="$(
+  curl -fsS --cacert "$WORK_DIR/tls/ca.crt"     -H "X-Vault-Token: $ROOT_TOKEN"     "$OPENBAO_ADDR/v1/sys/audit"
+)"
+printf '%s' "$AUDIT_LIST" | jq -e '."liliya-file/".type == "file"' >/dev/null
 
 ROTATE_STATUS="$(
   curl -sS --cacert "$WORK_DIR/tls/ca.crt"     -o "$WORK_DIR/rotate-denied.out"     -w '%{http_code}'     -H "X-Vault-Token: $APP_TOKEN"     -H "Content-Type: application/json"     -X POST     -d '{}'     "$OPENBAO_ADDR/v1/transit/keys/$OPENBAO_KEY/rotate"
