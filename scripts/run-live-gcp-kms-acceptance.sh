@@ -8,13 +8,16 @@ fi
 
 KEY_VERSION="$1"
 
-case "$KEY_VERSION" in
-  projects/*/locations/*/keyRings/*/cryptoKeys/*/cryptoKeyVersions/*) ;;
-  *)
-    echo "Invalid Cloud KMS CryptoKeyVersion resource name" >&2
-    exit 2
-    ;;
-esac
+if [[ "$KEY_VERSION" =~ ^projects/([^/]+)/locations/([^/]+)/keyRings/([^/]+)/cryptoKeys/([^/]+)/cryptoKeyVersions/([^/]+)$ ]]; then
+  PROJECT_ID="${BASH_REMATCH[1]}"
+  LOCATION="${BASH_REMATCH[2]}"
+  KEY_RING="${BASH_REMATCH[3]}"
+  KEY_NAME="${BASH_REMATCH[4]}"
+  VERSION_ID="${BASH_REMATCH[5]}"
+else
+  echo "Invalid Cloud KMS CryptoKeyVersion resource name" >&2
+  exit 2
+fi
 
 echo "=== LIVE GCP KMS ACCEPTANCE ==="
 echo "Key version: $KEY_VERSION"
