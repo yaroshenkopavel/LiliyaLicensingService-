@@ -8,6 +8,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.postgresql.ds.PGSimpleDataSource
 import pro.liliya.licensing.issuer.DecisionCandidate
 import pro.liliya.licensing.issuer.DecisionScope
@@ -32,6 +33,7 @@ class PostgreSqlBackupRestoreAcceptanceTest {
 
     @Test
     fun seed_authoritative_state_for_backup() {
+        requireAcceptanceEnvironment()
         val port = PostgreSqlDecisionTransactionPort(adminDataSource())
         port.initializeSchema()
         port.deleteForTest(scope)
@@ -55,6 +57,7 @@ class PostgreSqlBackupRestoreAcceptanceTest {
 
     @Test
     fun restored_authoritative_state_is_exact_and_runtime_can_advance_monotonically() {
+        requireAcceptanceEnvironment()
         val port = PostgreSqlDecisionTransactionPort(runtimeDataSource())
 
         val restored = assertNotNull(port.inspect(scope))
@@ -80,6 +83,7 @@ class PostgreSqlBackupRestoreAcceptanceTest {
 
     @Test
     fun runtime_role_has_no_schema_creation_privilege() {
+        requireAcceptanceEnvironment()
         runtimeDataSource().connection.use { connection ->
             assertFailsWith<SQLException> {
                 connection.createStatement().use { statement ->
@@ -144,6 +148,20 @@ class PostgreSqlBackupRestoreAcceptanceTest {
             this.user = user
             this.password = password
         }
+
+    private fun requireAcceptanceEnvironment() {
+        val names = listOf(
+            "S7_5_POSTGRES_URL",
+            "S7_5_POSTGRES_ADMIN_USER",
+            "S7_5_POSTGRES_ADMIN_PASSWORD",
+            "S7_5_POSTGRES_RUNTIME_USER",
+            "S7_5_POSTGRES_RUNTIME_PASSWORD"
+        )
+        assumeTrue(
+            names.all { !System.getenv(it).isNullOrBlank() },
+            "S7.5 external backup/restore environment is not configured"
+        )
+    }
 
     private fun requiredEnv(name: String): String =
         System.getenv(name)?.takeIf { it.isNotBlank() }
