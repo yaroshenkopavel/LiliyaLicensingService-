@@ -4,8 +4,12 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.file.Files
+import java.security.KeyStore
 import java.nio.file.Path
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLException
+import javax.net.ssl.TrustManagerFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -32,11 +36,21 @@ class LicenseS76AuthenticatedHttpsAcceptanceTest {
         val bearer = System.getenv("LIVE_S76_BEARER")
         val publicKeyPath = System.getenv("LIVE_S76_PUBLIC_KEY_DER_PATH")
         val evidencePath = System.getenv("LIVE_S76_EVIDENCE_PATH")
+        val trustStorePath = System.getenv("LIVE_S76_TRUSTSTORE_PATH")
+        val trustStorePassword = System.getenv("LIVE_S76_TRUSTSTORE_PASSWORD")
 
         assumeTrue(!endpoint.isNullOrBlank(), "LIVE_S76_HTTPS_ENDPOINT is not configured")
         assumeTrue(!bearer.isNullOrBlank(), "LIVE_S76_BEARER is not configured")
         assumeTrue(!publicKeyPath.isNullOrBlank(), "LIVE_S76_PUBLIC_KEY_DER_PATH is not configured")
         assumeTrue(Files.isRegularFile(Path.of(publicKeyPath!!)), "S7.6 public key file is missing")
+        assumeTrue(!trustStorePath.isNullOrBlank(), "S7.6 truststore path is not configured")
+        assumeTrue(!trustStorePassword.isNullOrBlank(), "S7.6 truststore password is not configured")
+        assumeTrue(Files.isRegularFile(Path.of(trustStorePath!!)), "S7.6 truststore is missing")
+
+        installAcceptanceTrust(
+            path = Path.of(trustStorePath),
+            password = trustStorePassword!!.toCharArray()
+        )
 
         val url = URL(endpoint!!)
         assertEquals("https", url.protocol)
@@ -122,6 +136,27 @@ class LicenseS76AuthenticatedHttpsAcceptanceTest {
                 target.parent?.let(Files::createDirectories)
                 Files.writeString(target, evidence + "\n")
             }
+    }
+
+    private fun installAcceptanceTrust(
+        path: Path,
+        password: CharArray
+    ) {
+        try {
+            val keyStore = KeyStore.getInstance("PKCS12")
+            Files.newInputStream(path).use { input ->
+                keyStore.load(input, password)
+            }
+            val trustManagers = TrustManagerFactory.getInstance(
+                TrustManagerFactory.getDefaultAlgorithm()
+            )
+            trustManagers.init(keyStore)
+            val context = SSLContext.getInstance("TLS")
+            context.init(null, trustManagers.trustManagers, null)
+            HttpsURLConnection.setDefaultSSLSocketFactory(context.socketFactory)
+        } finally {
+            password.fill('\u0000')
+        }
     }
 
     private fun verify(
