@@ -55,6 +55,58 @@ data class LicenseServiceRequest(
             "enrollmentReference=<redacted>)"
 }
 
+sealed interface LicenseServiceRequestCreationResult {
+    data class Created(val request: LicenseServiceRequest) : LicenseServiceRequestCreationResult
+    data class Rejected(val reason: LicenseServiceFailure) : LicenseServiceRequestCreationResult
+}
+
+object LicenseServiceRequestFactory {
+    fun create(
+        protocolVersion: Int,
+        operation: String,
+        productId: String,
+        subjectReference: String,
+        requestId: String? = null,
+        enrollmentReference: String? = null
+    ): LicenseServiceRequestCreationResult {
+        if (protocolVersion <= 0) {
+            return LicenseServiceRequestCreationResult.Rejected(
+                LicenseServiceFailure.INVALID_REQUEST
+            )
+        }
+
+        val parsedOperation = try {
+            LicenseOperation.valueOf(operation)
+        } catch (_: IllegalArgumentException) {
+            return LicenseServiceRequestCreationResult.Rejected(
+                LicenseServiceFailure.INVALID_REQUEST
+            )
+        }
+
+        if (
+            productId.isBlank() ||
+            subjectReference.isBlank() ||
+            (requestId != null && requestId.isBlank()) ||
+            (enrollmentReference != null && enrollmentReference.isBlank())
+        ) {
+            return LicenseServiceRequestCreationResult.Rejected(
+                LicenseServiceFailure.INVALID_REQUEST
+            )
+        }
+
+        return LicenseServiceRequestCreationResult.Created(
+            LicenseServiceRequest(
+                protocolVersion = LicenseProtocolVersion(protocolVersion),
+                operation = parsedOperation,
+                productId = productId,
+                subjectReference = subjectReference,
+                requestId = requestId,
+                enrollmentReference = enrollmentReference
+            )
+        )
+    }
+}
+
 sealed interface LicenseRequestValidationResult {
     data class Accepted(val request: LicenseServiceRequest) : LicenseRequestValidationResult
     data class Rejected(val reason: LicenseServiceFailure) : LicenseRequestValidationResult
