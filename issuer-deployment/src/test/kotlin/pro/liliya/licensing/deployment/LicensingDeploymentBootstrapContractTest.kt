@@ -86,6 +86,8 @@ class LicensingDeploymentBootstrapContractTest {
             "LILIYA_OPENBAO_ADDRESS" to "https://openbao.internal:8200",
             "LILIYA_OPENBAO_KEY_REFERENCE" to "licensing-prod",
             "LILIYA_OPENBAO_TOKEN" to "openbao-token-private",
-            "LILIYA_REQUEST_AUTH_SECRET" to "request-auth-secret-private"
+            "LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE" to "prod-request-auth-id",
+            "LILIYA_REQUEST_AUTH_SECRET" to "request-auth-secret-private",
+            "LILIYA_TLS_IDENTITY_REFERENCE" to "prod-tls-id"
         )
 }
