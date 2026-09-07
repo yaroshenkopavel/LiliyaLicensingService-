@@ -76,8 +76,12 @@ jobs:
 
           curl -fsS             -H "X-Vault-Token: $ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'             http://127.0.0.1:18591/v1/transit/keys/license-signing-s79a >/dev/null
 
+          curl -fsS             -H "X-Vault-Token: $ROOT_TOKEN"             -H "Content-Type: application/json"             -X POST             -d '{"type":"ecdsa-p256","exportable":false,"allow_plaintext_backup":false}'             http://127.0.0.1:18591/v1/transit/keys/license-service-state-s79a >/dev/null
+
           POLICY='path "transit/keys/license-signing-s79a" { capabilities = ["read"] }
-          path "transit/sign/license-signing-s79a/sha2-256" { capabilities = ["update"] }'
+          path "transit/sign/license-signing-s79a/sha2-256" { capabilities = ["update"] }
+          path "transit/keys/license-service-state-s79a" { capabilities = ["read"] }
+          path "transit/sign/license-service-state-s79a/sha2-256" { capabilities = ["update"] }'
 
           curl -fsS             -H "X-Vault-Token: $ROOT_TOKEN"             -H "Content-Type: application/json"             -X PUT             -d "$(jq -n --arg policy "$POLICY" '{policy:$policy}')"             http://127.0.0.1:18591/v1/sys/policies/acl/liliya-s79a-signer >/dev/null
 
@@ -144,7 +148,7 @@ jobs:
           RUNTIME_PASS="$(cat .s79a-db-runtime)"
 
           set +e
-          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-not-ready.log 2>&1
+          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9a-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79a           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-not-ready.log 2>&1
           STATUS=$?
           set -e
 
@@ -177,7 +181,7 @@ jobs:
           TLS_PASS="$(cat .s79a-tls-pass)"
           RUNTIME_PASS="$(cat .s79a-db-runtime)"
 
-          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-ready.log 2>&1 &
+          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9a-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79a           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-ready.log 2>&1 &
           echo $! > .s79a-service-pid
 
           for i in $(seq 1 60); do
