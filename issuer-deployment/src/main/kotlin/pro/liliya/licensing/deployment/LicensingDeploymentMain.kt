@@ -1,31 +1,17 @@
 package pro.liliya.licensing.deployment
 
 import kotlin.system.exitProcess
+import pro.liliya.licensing.observability.ConsoleLicensingOperationalEventSink
 
 fun main() {
-    when (
-        val result = LicensingDeploymentConfigLoader(
+    val exitCode = LicensingDeploymentBootstrap(
+        loader = LicensingDeploymentConfigLoader(
             SystemDeploymentEnvironmentSource()
-        ).load()
-    ) {
-        is DeploymentConfigLoadResult.Loaded -> {
-            result.config.use { config ->
-                println(
-                    "LICENSING_DEPLOYMENT_BOOTSTRAP_READY={" +
-                        config.structuralSummary() +
-                        ",serverStarted=false}"
-                )
-            }
-        }
+        ),
+        sink = ConsoleLicensingOperationalEventSink()
+    ).run()
 
-        is DeploymentConfigLoadResult.Rejected -> {
-            System.err.println(
-                "LICENSING_DEPLOYMENT_BOOTSTRAP_REJECTED={" +
-                    "key=" + result.failure.key +
-                    ",reason=" + result.failure.reason +
-                    ",value=<redacted>}"
-            )
-            exitProcess(2)
-        }
+    if (exitCode != 0) {
+        exitProcess(exitCode)
     }
 }
