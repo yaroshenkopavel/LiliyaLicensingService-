@@ -39,6 +39,12 @@ jobs:
         with:
           gradle-version: "9.6.1"
 
+      - name: Set up Android SDK for frozen LiliyaCore configuration
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
       - name: Run free OpenBao Transit cross-repository acceptance
         shell: bash
         run: |
