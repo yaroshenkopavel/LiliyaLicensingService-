@@ -1,0 +1,124 @@
+package pro.liliya.licensing.issuer
+
+import java.time.Instant
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import pro.liliya.licensing.protocol.LicenseProtocolVersion
+import pro.liliya.licensing.protocol.LicenseRequestValidator
+import pro.liliya.licensing.protocol.LicenseServiceFailure
+import pro.liliya.licensing.protocol.LicenseServiceRequest
+import pro.liliya.licensing.protocol.LicenseOperation
+import pro.liliya.licensing.signing.LicenseEnvelopeSigner
+import pro.liliya.licensing.signing.LicenseSigningComposition
+import pro.liliya.licensing.signing.SignedLicenseEnvelope
+import pro.liliya.licensing.signing.SigningResult
+
+class LicensingIssuerCoordinatorContractTest {
+    @Test
+    fun ineligible_source_never_reaches_signer() {
+        var signerCalls = 0
+        val coordinator = coordinator(
+            source = EntitlementSourcePort {
+                EntitlementSourceResult.Ineligible(LicenseServiceFailure.SUBJECT_NOT_ELIGIBLE)
+            },
+            signer = LicenseEnvelopeSigner { _, _ ->
+                signerCalls++
+                error("must not sign")
+            },
+            transactions = singleCommitTransactions()
+        )
+
+        val result = coordinator.process(request())
+
+        val rejected = assertIs<LicensingIssuerResult.Rejected>(result)
+        assertEquals(LicenseServiceFailure.SUBJECT_NOT_ELIGIBLE, rejected.reason)
+        assertEquals(0, signerCalls)
+    }
+
+    @Test
+    fun source_failure_never_mints_entitlement() {
+        var signerCalls = 0
+        val coordinator = coordinator(
+            source = EntitlementSourcePort {
+                EntitlementSourceResult.Failed(LicenseServiceFailure.ENTITLEMENT_SOURCE_UNAVAILABLE)
+            },
+            signer = LicenseEnvelopeSigner { _, _ ->
+                signerCalls++
+                error("must not sign")
+            },
+            transactions = singleCommitTransactions()
+        )
+
+        val rejected = assertIs<LicensingIssuerResult.Rejected>(coordinator.process(request()))
+        assertEquals(LicenseServiceFailure.ENTITLEMENT_SOURCE_UNAVAILABLE, rejected.reason)
+        assertEquals(0, signerCalls)
+    }
+
+    @Test
+    fun eligible_source_uses_authoritative_record_not_request_as_entitlement_facts() {
+        val source = record()
+        var signedPayloads = 0
+        val coordinator = coordinator(
+            source = EntitlementSourcePort { EntitlementSourceResult.Eligible(source) },
+            signer = LicenseEnvelopeSigner { payload, key ->
+                signedPayloads++
+                SigningResult.Signed(SignedLicenseEnvelope(key, payload, byteArrayOf(1)))
+            },
+            transactions = singleCommitTransactions()
+        )
+
+        val result = assertIs<LicensingIssuerResult.Issued>(
+            coordinator.process(
+                request().copy(
+                    productId = "request-lookup-product",
+                    subjectReference = "request-lookup-subject"
+                )
+            )
+        )
+
+        assertEquals(1, signedPayloads)
+        assertEquals(0L, result.state.replaySequence)
+        assertEquals(source.revocationEpoch, result.state.revocationEpoch)
+    }
+
+    private fun coordinator(
+        source: EntitlementSourcePort,
+        signer: LicenseEnvelopeSigner,
+        transactions: DecisionTransactionPort
+    ) = LicensingIssuerCoordinator(
+        validator = LicenseRequestValidator(LicenseProtocolVersion(1)),
+        source = source,
+        transactions = transactions,
+        signing = LicenseSigningComposition(signer)
+    )
+
+    private fun singleCommitTransactions() = DecisionTransactionPort { _, block ->
+        val candidate = block(null)
+            ?: return@DecisionTransactionPort DecisionTransactionResult.Rejected(
+                DecisionTransactionFailure.REJECTED
+            )
+        DecisionTransactionResult.Committed(candidate.nextState, candidate.envelope)
+    }
+
+    private fun request() = LicenseServiceRequest(
+        protocolVersion = LicenseProtocolVersion(1),
+        operation = LicenseOperation.ISSUE,
+        productId = "lookup-product",
+        subjectReference = "lookup-subject"
+    )
+
+    private fun record() = EntitlementSourceRecord(
+        licenseId = "lic-001",
+        subject = "authoritative-subject",
+        productId = "authoritative-product",
+        features = setOf("core"),
+        version = 1,
+        signingKeyId = "test-key-1",
+        issuedAt = Instant.parse("2026-09-07T08:00:00Z"),
+        notBefore = Instant.parse("2026-09-07T08:00:00Z"),
+        expiresAt = Instant.parse("2026-10-07T08:00:00Z"),
+        offlineLeaseUntil = Instant.parse("2026-09-14T08:00:00Z"),
+        revocationEpoch = 3
+    )
+}
