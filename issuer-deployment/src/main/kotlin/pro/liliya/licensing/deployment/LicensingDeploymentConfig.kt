@@ -156,29 +156,42 @@ class LicensingDeploymentConfigLoader(
             ?: return invalid(DeploymentConfigKey.LISTENER_PORT)
         if (port !in 1..65535) return invalid(DeploymentConfigKey.LISTENER_PORT)
 
-        return try {
-            DeploymentConfigLoadResult.Loaded(
-                LicensingDeploymentConfig(
-                    environment = environment,
-                    listenerHost = values.getValue(DeploymentConfigKey.LISTENER_HOST),
-                    listenerPort = port,
-                    postgresJdbcUrl = values.getValue(DeploymentConfigKey.POSTGRES_JDBC_URL),
-                    postgresUsername = values.getValue(DeploymentConfigKey.POSTGRES_USERNAME),
-                    postgresPassword = secret(values.getValue(DeploymentConfigKey.POSTGRES_PASSWORD)),
-                    openBaoAddress = values.getValue(DeploymentConfigKey.OPENBAO_ADDRESS),
-                    openBaoKeyReference = values.getValue(DeploymentConfigKey.OPENBAO_KEY_REFERENCE),
-                    openBaoToken = secret(values.getValue(DeploymentConfigKey.OPENBAO_TOKEN)),
-                    requestAuthenticationSecret = secret(values.getValue(DeploymentConfigKey.REQUEST_AUTH_SECRET))
-                )
-            )
-        } catch (_: IllegalArgumentException) {
-            DeploymentConfigLoadResult.Rejected(
-                DeploymentConfigFailure(
-                    key = DeploymentConfigKey.ENVIRONMENT,
-                    reason = DeploymentConfigFailureReason.INVALID_VALUE
-                )
-            )
+        val listenerHost = values.getValue(DeploymentConfigKey.LISTENER_HOST)
+        if (listenerHost.isBlank()) return invalid(DeploymentConfigKey.LISTENER_HOST)
+
+        val postgresJdbcUrl = values.getValue(DeploymentConfigKey.POSTGRES_JDBC_URL)
+        if (!postgresJdbcUrl.startsWith("jdbc:postgresql://")) {
+            return invalid(DeploymentConfigKey.POSTGRES_JDBC_URL)
         }
+
+        val postgresUsername = values.getValue(DeploymentConfigKey.POSTGRES_USERNAME)
+        if (postgresUsername.isBlank()) return invalid(DeploymentConfigKey.POSTGRES_USERNAME)
+
+        val openBaoAddress = values.getValue(DeploymentConfigKey.OPENBAO_ADDRESS)
+        if (
+            environment != LicensingDeploymentEnvironment.DEVELOPMENT &&
+            !openBaoAddress.startsWith("https://")
+        ) {
+            return invalid(DeploymentConfigKey.OPENBAO_ADDRESS)
+        }
+
+        val openBaoKeyReference = values.getValue(DeploymentConfigKey.OPENBAO_KEY_REFERENCE)
+        if (openBaoKeyReference.isBlank()) return invalid(DeploymentConfigKey.OPENBAO_KEY_REFERENCE)
+
+        return DeploymentConfigLoadResult.Loaded(
+            LicensingDeploymentConfig(
+                environment = environment,
+                listenerHost = listenerHost,
+                listenerPort = port,
+                postgresJdbcUrl = postgresJdbcUrl,
+                postgresUsername = postgresUsername,
+                postgresPassword = secret(values.getValue(DeploymentConfigKey.POSTGRES_PASSWORD)),
+                openBaoAddress = openBaoAddress,
+                openBaoKeyReference = openBaoKeyReference,
+                openBaoToken = secret(values.getValue(DeploymentConfigKey.OPENBAO_TOKEN)),
+                requestAuthenticationSecret = secret(values.getValue(DeploymentConfigKey.REQUEST_AUTH_SECRET))
+            )
+        )
     }
 
     private fun invalid(key: DeploymentConfigKey): DeploymentConfigLoadResult.Rejected =
