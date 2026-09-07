@@ -29,6 +29,20 @@ enum class LicensingOperationalEventCode {
     DEPENDENCY_UNAVAILABLE
 }
 
+enum class LicensingOperationalDetailCode {
+    NONE,
+    ENVIRONMENT,
+    LISTENER_HOST,
+    LISTENER_PORT,
+    POSTGRES_JDBC_URL,
+    POSTGRES_USERNAME,
+    POSTGRES_PASSWORD,
+    OPENBAO_ADDRESS,
+    OPENBAO_KEY_REFERENCE,
+    OPENBAO_TOKEN,
+    REQUEST_AUTH_SECRET
+}
+
 enum class LicensingOperationalReasonCode {
     NONE,
     MISSING_REQUIRED_CONFIGURATION,
@@ -50,14 +64,16 @@ data class LicensingOperationalEvent(
     val environment: LicensingOperationalEnvironment,
     val component: LicensingOperationalComponent,
     val code: LicensingOperationalEventCode,
-    val reason: LicensingOperationalReasonCode = LicensingOperationalReasonCode.NONE
+    val reason: LicensingOperationalReasonCode = LicensingOperationalReasonCode.NONE,
+    val detail: LicensingOperationalDetailCode = LicensingOperationalDetailCode.NONE
 ) {
     fun structuralLine(): String =
         "LICENSING_OPERATIONAL_EVENT={" +
             "\"environment\":\"" + environment + "\"," +
             "\"component\":\"" + component + "\"," +
             "\"code\":\"" + code + "\"," +
-            "\"reason\":\"" + reason + "\"" +
+            "\"reason\":\"" + reason + "\"," +
+            "\"detail\":\"" + detail + "\"" +
             "}"
 
     override fun toString(): String = structuralLine()
