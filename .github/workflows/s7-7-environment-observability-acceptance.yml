@@ -1,0 +1,44 @@
+name: S7.7 Environment Observability Acceptance
+
+on:
+  push:
+    branches:
+      - main
+      - "licensing/s7-7-env-observability-v0.1"
+  pull_request:
+    paths:
+      - "issuer-deployment/**"
+      - "issuer-observability/**"
+      - "scripts/run-s7-7-environment-observability-acceptance.sh"
+      - ".github/workflows/s7-7-environment-observability-acceptance.yml"
+      - ".github/workflows/ci.yml"
+      - "settings.gradle.kts"
+
+permissions:
+  contents: read
+
+jobs:
+  environment-observability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Licensing Service
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Run environment separation and observability acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./scripts/run-s7-7-environment-observability-acceptance.sh 2>&1 | tee s7-7-environment-observability.log
+          grep -F 'LICENSING_S7_7_EVIDENCE=' s7-7-environment-observability.log
+          grep -F '=== S7.7 ENVIRONMENT OBSERVABILITY ACCEPTANCE PASS ===' s7-7-environment-observability.log
