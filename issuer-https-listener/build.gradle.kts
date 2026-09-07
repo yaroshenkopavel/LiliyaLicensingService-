@@ -14,6 +14,8 @@ dependencies {
     testImplementation(project(":issuer-core"))
     testImplementation(project(":issuer-testkit"))
     testImplementation(project(":issuer-openbao-transit"))
+    testImplementation(project(":issuer-postgres"))
+    testImplementation("org.postgresql:postgresql:42.7.7")
     testImplementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
@@ -37,4 +39,13 @@ tasks.register<JavaExec>("runS76AuthenticatedHttpsAcceptanceHost") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("pro.liliya.licensing.https.S76AuthenticatedHttpsAcceptanceHostKt")
+}
+
+
+tasks.register<JavaExec>("runS78StagingHttpsAcceptanceHost") {
+    group = "verification"
+    description = "Runs the S7.8 staging HTTPS host with PostgreSQL authoritative state."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("pro.liliya.licensing.https.S78StagingHttpsAcceptanceHostKt")
 }
