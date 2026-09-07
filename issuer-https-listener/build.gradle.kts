@@ -11,6 +11,10 @@ dependencies {
     implementation(project(":issuer-request-auth"))
     implementation(project(":issuer-runtime"))
 
+    testImplementation(project(":issuer-core"))
+    testImplementation(project(":issuer-testkit"))
+    testImplementation(project(":issuer-openbao-transit"))
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
 }
@@ -25,4 +29,12 @@ tasks.register<JavaExec>("runHttpsAcceptanceHost") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("pro.liliya.licensing.https.ProductionHttpsAcceptanceHostKt")
+}
+
+tasks.register<JavaExec>("runS76AuthenticatedHttpsAcceptanceHost") {
+    group = "verification"
+    description = "Runs the S7.6b authenticated HTTPS cross-repository acceptance host."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("pro.liliya.licensing.https.S76AuthenticatedHttpsAcceptanceHostKt")
 }
