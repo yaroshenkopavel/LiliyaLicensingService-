@@ -73,7 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts'             issuer-core issuer-testkit issuer-postgres issuer-openbao-transit issuer-transport-contract issuer-http-endpoint issuer-runtime issuer-request-auth issuer-deployment; then
+          if grep -R -n -E 'android\.|com\.android|onnx|llama\.cpp|RuntimeHardening'             --include='*.kt' --include='*.kts'             issuer-core issuer-testkit issuer-postgres issuer-openbao-transit issuer-transport-contract issuer-http-endpoint issuer-runtime issuer-request-auth issuer-deployment issuer-https-listener; then
             echo "Forbidden client/runtime dependency found"
             exit 1
           fi
