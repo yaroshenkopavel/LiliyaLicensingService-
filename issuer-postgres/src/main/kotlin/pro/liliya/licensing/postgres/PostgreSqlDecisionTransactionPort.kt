@@ -30,26 +30,117 @@ class PostgreSqlDecisionTransactionPort(
 
     fun initializeSchema() {
         dataSource.connection.use { connection ->
-            connection.createStatement().use { statement ->
+            connection.autoCommit = false
+            try {
+                connection.createStatement().use { statement ->
+                    statement.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS licensing_decision_state (
+                            subject TEXT NOT NULL,
+                            product_id TEXT NOT NULL,
+                            replay_sequence BIGINT NOT NULL CHECK (replay_sequence >= 0),
+                            revocation_epoch BIGINT NOT NULL CHECK (revocation_epoch >= 0),
+                            envelope_schema_version BIGINT NOT NULL CHECK (envelope_schema_version > 0),
+                            algorithm TEXT NOT NULL CHECK (length(algorithm) > 0),
+                            signing_key_reference TEXT NOT NULL CHECK (length(signing_key_reference) > 0),
+                            canonical_payload BYTEA NOT NULL CHECK (octet_length(canonical_payload) > 0),
+                            signature BYTEA NOT NULL CHECK (octet_length(signature) > 0),
+                            PRIMARY KEY (subject, product_id)
+                        )
+                        """.trimIndent()
+                    )
+                }
+
+                migrateLegacyEnvelopeColumnsIfSafe(connection)
+                connection.commit()
+            } catch (failure: RuntimeException) {
+                safeRollback(connection)
+                throw failure
+            } catch (failure: SQLException) {
+                safeRollback(connection)
+                throw IllegalStateException("failed to initialize licensing decision schema", failure)
+            }
+        }
+    }
+
+    private fun migrateLegacyEnvelopeColumnsIfSafe(connection: Connection) {
+        val hasSchemaVersion = columnExists(connection, "envelope_schema_version")
+        val hasAlgorithm = columnExists(connection, "algorithm")
+
+        if (hasSchemaVersion && hasAlgorithm) {
+            return
+        }
+
+        if (authoritativeRowCount(connection) > 0L) {
+            throw IllegalStateException(
+                "legacy licensing decision schema contains authoritative rows; " +
+                    "explicit offline migration is required"
+            )
+        }
+
+        connection.createStatement().use { statement ->
+            if (!hasSchemaVersion) {
                 statement.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS licensing_decision_state (
-                        subject TEXT NOT NULL,
-                        product_id TEXT NOT NULL,
-                        replay_sequence BIGINT NOT NULL CHECK (replay_sequence >= 0),
-                        revocation_epoch BIGINT NOT NULL CHECK (revocation_epoch >= 0),
-                        envelope_schema_version BIGINT NOT NULL CHECK (envelope_schema_version > 0),
-                        algorithm TEXT NOT NULL CHECK (length(algorithm) > 0),
-                        signing_key_reference TEXT NOT NULL CHECK (length(signing_key_reference) > 0),
-                        canonical_payload BYTEA NOT NULL CHECK (octet_length(canonical_payload) > 0),
-                        signature BYTEA NOT NULL CHECK (octet_length(signature) > 0),
-                        PRIMARY KEY (subject, product_id)
-                    )
+                    ALTER TABLE licensing_decision_state
+                    ADD COLUMN envelope_schema_version BIGINT
+                        CHECK (envelope_schema_version > 0)
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    ALTER TABLE licensing_decision_state
+                    ALTER COLUMN envelope_schema_version SET NOT NULL
+                    """.trimIndent()
+                )
+            }
+
+            if (!hasAlgorithm) {
+                statement.execute(
+                    """
+                    ALTER TABLE licensing_decision_state
+                    ADD COLUMN algorithm TEXT
+                        CHECK (length(algorithm) > 0)
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    ALTER TABLE licensing_decision_state
+                    ALTER COLUMN algorithm SET NOT NULL
                     """.trimIndent()
                 )
             }
         }
     }
+
+    private fun columnExists(connection: Connection, columnName: String): Boolean =
+        connection.prepareStatement(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'licensing_decision_state'
+                  AND column_name = ?
+            )
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, columnName)
+            statement.executeQuery().use { result ->
+                check(result.next()) { "schema inspection returned no row" }
+                result.getBoolean(1)
+            }
+        }
+
+    private fun authoritativeRowCount(connection: Connection): Long =
+        connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT COUNT(*) FROM licensing_decision_state"
+            ).use { result ->
+                check(result.next()) { "row-count query returned no row" }
+                result.getLong(1)
+            }
+        }
 
     override fun transact(
         scope: DecisionScope,
