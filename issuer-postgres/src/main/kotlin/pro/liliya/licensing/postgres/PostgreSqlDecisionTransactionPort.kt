@@ -56,7 +56,7 @@ class PostgreSqlDecisionTransactionPort(
         return try {
             dataSource.connection.use { connection ->
                 connection.autoCommit = false
-                connection.transactionIsolation = Connection.TRANSACTION_SERIALIZABLE
+                connection.transactionIsolation = Connection.TRANSACTION_READ_COMMITTED
                 try {
                     acquireScopeLock(connection, scope)
                     val current = loadLocked(connection, scope)
