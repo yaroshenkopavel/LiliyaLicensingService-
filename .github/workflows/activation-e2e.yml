@@ -50,7 +50,7 @@ jobs:
       - name: Build production distribution
         run: |
           set -euo pipefail
-          gradle --no-daemon :issuer-deployment:installDist :issuer-deployment:testClasses --console=plain
+          gradle --no-daemon :issuer-deployment:installDist :issuer-deployment:testClasses :issuer-activation-admin:installDist --console=plain
 
       - name: Prepare OpenBao signing fixture
         shell: bash
@@ -132,7 +132,7 @@ jobs:
                   now() + interval '7 days', 0
                 )" >/dev/null
 
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
+          ADMIN_CP="issuer-activation-admin/build/install/issuer-activation-admin/lib/*"
           OUTPUT="$(
             LILIYA_ACTIVATION_ADMIN_JDBC_URL=jdbc:postgresql://127.0.0.1:18690/liliya_activation             LILIYA_ACTIVATION_ADMIN_USERNAME=postgres             LILIYA_ACTIVATION_ADMIN_PASSWORD=activation-admin-fixture               java -cp "$CP" pro.liliya.licensing.activation.ActivationAdminMainKt               provision activation-phone-1 liliya-pro 60
           )"
