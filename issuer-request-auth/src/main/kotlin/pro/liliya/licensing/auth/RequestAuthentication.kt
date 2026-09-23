@@ -44,3 +44,30 @@ fun interface RequestAuthenticationPort {
         credential: RequestAuthenticationCredential?
     ): RequestAuthenticationResult
 }
+
+
+data class RequestAuthenticationScope(
+    val subject: String,
+    val productId: String
+) {
+    init {
+        require(subject.isNotBlank()) { "authentication subject must not be blank" }
+        require(productId.isNotBlank()) { "authentication productId must not be blank" }
+    }
+
+    override fun toString(): String =
+        "RequestAuthenticationScope(subject=<redacted>,productId=$productId)"
+}
+
+/**
+ * Scope-aware transport authentication used by the production license endpoint.
+ *
+ * This allows an installation credential to be bound to the exact subject/product pair while
+ * preserving the original unscoped authentication seam for internal/service-state traffic.
+ */
+fun interface ScopedRequestAuthenticationPort {
+    fun authenticate(
+        credential: RequestAuthenticationCredential?,
+        scope: RequestAuthenticationScope
+    ): RequestAuthenticationResult
+}
