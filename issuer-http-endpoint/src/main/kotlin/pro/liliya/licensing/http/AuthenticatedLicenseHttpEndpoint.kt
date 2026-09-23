@@ -28,14 +28,33 @@ class AuthenticatedLicenseHttpEndpoint(
             return delegate.handle(request)
         }
 
-        when (LicenseWireJsonCodec.decodeRequest(request.body)) {
-            is LicenseWireDecodeResult.Decoded -> Unit
+        val decodedRequest = when (val decoded = LicenseWireJsonCodec.decodeRequest(request.body)) {
+            is LicenseWireDecodeResult.Decoded -> decoded.value
             is LicenseWireDecodeResult.Rejected -> return delegate.handle(request)
         }
 
         return when (val result = authentication.authenticate(request.authentication)) {
             RequestAuthenticationResult.Authenticated ->
                 delegate.handle(request)
+
+            is RequestAuthenticationResult.AuthenticatedScoped ->
+                if (
+                    result.scope.subject == decodedRequest.request.subjectReference &&
+                    result.scope.productId == decodedRequest.request.productId
+                ) {
+                    delegate.handle(request)
+                } else {
+                    LicenseHttpResponse(
+                        status = 401,
+                        contentType = LicenseHttpEndpoint.JSON,
+                        body = LicenseWireJsonCodec.encodeResponse(
+                            LicenseWireResponse.ServiceRejected(
+                                wireVersion = LicenseWireJsonCodec.currentVersion,
+                                reason = LicenseServiceFailure.AUTHENTICATION_REQUIRED
+                            )
+                        )
+                    )
+                }
 
             is RequestAuthenticationResult.Rejected ->
                 when (result.reason) {
