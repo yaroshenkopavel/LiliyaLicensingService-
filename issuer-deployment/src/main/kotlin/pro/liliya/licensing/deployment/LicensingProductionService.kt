@@ -336,10 +336,10 @@ class LicensingProductionService private constructor(
                 delegate = LicenseHttpEndpoint(coordinator),
                 authentication = authentication
             )
+            val activationStore = PostgreSqlActivationGrantStore(dataSource)
+            activationStore.verifySchema()
             val activationEndpoint = ActivationLicenseHttpEndpoint(
-                redemption = ActivationRedemptionService(
-                    PostgreSqlActivationGrantStore(dataSource)
-                ),
+                redemption = ActivationRedemptionService(activationStore),
                 coordinator = coordinator
             )
             val serviceStateEndpoint = AuthenticatedServiceStateHttpEndpoint(
