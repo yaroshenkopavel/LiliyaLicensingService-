@@ -5,10 +5,13 @@ import java.util.concurrent.atomic.AtomicReference
 import org.postgresql.ds.PGSimpleDataSource
 import pro.liliya.licensing.activation.ActivationRedemptionService
 import pro.liliya.licensing.activation.PostgreSqlActivationGrantStore
+import pro.liliya.licensing.activation.InstallCredentialVerificationResult
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
+import pro.liliya.licensing.auth.RequestAuthenticationScope
+import pro.liliya.licensing.auth.ScopedRequestAuthenticationPort
 import pro.liliya.licensing.http.ActivationLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
@@ -99,6 +102,58 @@ class SharedSecretRequestAuthentication(
 
     override fun toString(): String =
         "SharedSecretRequestAuthentication(secret=<redacted>,closed=" + closed + ")"
+}
+
+class ProductionScopedRequestAuthentication(
+    private val global: SharedSecretRequestAuthentication,
+    private val installs: PostgreSqlActivationGrantStore
+) : ScopedRequestAuthenticationPort {
+    override fun authenticate(
+        credential: RequestAuthenticationCredential?,
+        scope: RequestAuthenticationScope
+    ): RequestAuthenticationResult {
+        if (credential == null) {
+            return RequestAuthenticationResult.Rejected(
+                RequestAuthenticationFailure.MISSING
+            )
+        }
+
+        when (val globalResult = global.authenticate(credential)) {
+            RequestAuthenticationResult.Authenticated -> return globalResult
+            is RequestAuthenticationResult.Rejected -> {
+                if (globalResult.reason == RequestAuthenticationFailure.UNAVAILABLE) {
+                    return globalResult
+                }
+            }
+        }
+
+        val bytes = credential.copyBytes()
+        return try {
+            when (
+                installs.verify(
+                    subject = scope.subject,
+                    productId = scope.productId,
+                    secret = bytes
+                )
+            ) {
+                InstallCredentialVerificationResult.VALID ->
+                    RequestAuthenticationResult.Authenticated
+                InstallCredentialVerificationResult.INVALID ->
+                    RequestAuthenticationResult.Rejected(
+                        RequestAuthenticationFailure.INVALID
+                    )
+                InstallCredentialVerificationResult.UNAVAILABLE ->
+                    RequestAuthenticationResult.Rejected(
+                        RequestAuthenticationFailure.UNAVAILABLE
+                    )
+            }
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
+    override fun toString(): String =
+        "ProductionScopedRequestAuthentication(global=<redacted>,installs=<redacted>)"
 }
 
 class PostgreSqlRuntimeReadinessDependency(
@@ -332,12 +387,15 @@ class LicensingProductionService private constructor(
                 transactions = transactions,
                 signing = LicenseSigningComposition(signer)
             )
-            val endpoint = AuthenticatedLicenseHttpEndpoint(
-                delegate = LicenseHttpEndpoint(coordinator),
-                authentication = authentication
-            )
             val activationStore = PostgreSqlActivationGrantStore(dataSource)
             activationStore.verifySchema()
+            val endpoint = AuthenticatedLicenseHttpEndpoint(
+                delegate = LicenseHttpEndpoint(coordinator),
+                authentication = ProductionScopedRequestAuthentication(
+                    global = authentication,
+                    installs = activationStore
+                )
+            )
             val activationEndpoint = ActivationLicenseHttpEndpoint(
                 redemption = ActivationRedemptionService(activationStore),
                 coordinator = coordinator
