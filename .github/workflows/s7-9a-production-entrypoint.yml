@@ -143,7 +143,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79a-openbao-token)"
           AUTH_SECRET="$(cat .s79a-auth)"
           TLS_PASS="$(cat .s79a-tls-pass)"
@@ -177,7 +177,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79a-openbao-token)"
           AUTH_SECRET="$(cat .s79a-auth)"
           TLS_PASS="$(cat .s79a-tls-pass)"
