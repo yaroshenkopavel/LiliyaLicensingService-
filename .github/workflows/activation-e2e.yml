@@ -115,7 +115,7 @@ jobs:
 
           S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18690/liliya_activation           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD=activation-admin-fixture             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt
 
-          PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_activation_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_activation_runtime"             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_activation_runtime" >/dev/null
+          PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_activation_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_activation_runtime"             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_install_credential TO liliya_activation_runtime" >/dev/null
 
       - name: Create entitlement and one-time activation code
         shell: bash
@@ -155,6 +155,9 @@ jobs:
           TLS_PASS="$(cat .activation-tls-pass)"
           RUNTIME_PASS="$(cat .activation-runtime-pass)"
           CODE="$(cat .activation-code)"
+          INSTALL_ID="activation-install-01"
+          INSTALL_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$INSTALL_SECRET"
 
           LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18692           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18690/liliya_activation           LILIYA_POSTGRES_USERNAME=liliya_activation_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18691           LILIYA_OPENBAO_KEY_REFERENCE=activation-signing-ref           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=activation-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=activation-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.activation-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-activation           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=activation-state-ref           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-activation           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > activation-service.log 2>&1 &
           echo $! > .activation-service-pid
@@ -168,7 +171,7 @@ jobs:
             sleep 1
           done
 
-          BODY="$(jq -n --arg code "$CODE"             '{wireVersion:1,kind:"activate",activationCode:$code,activationRequestId:"activation-e2e-request-1"}')"
+          BODY="$(jq -n --arg code "$CODE" --arg secret "$INSTALL_SECRET"             '{wireVersion:1,kind:"activate",activationCode:$code,activationRequestId:"activation-e2e-request-1",installId:"activation-install-01",installSecret:$secret}')"
 
           curl -fsS --cacert .activation-tls/server.crt             -H "Content-Type: application/json"             -d "$BODY"             https://127.0.0.1:18692/v1/activate |
             tee activation-response.json
@@ -183,10 +186,17 @@ jobs:
           test "$STATUS" = "200"
           cmp activation-response.json activation-second.json
 
+          REFRESH_BODY='{"wireVersion":1,"kind":"request","protocolVersion":1,"operation":"REFRESH","productId":"liliya-pro","subjectReference":"activation-phone-1","requestId":"activation-refresh-1"}'
+          curl -fsS --cacert .activation-tls/server.crt             -H "Content-Type: application/json"             -H "Authorization: Bearer $INSTALL_SECRET"             -d "$REFRESH_BODY"             https://127.0.0.1:18692/v1/license |
+            tee activation-refresh.json
+          jq -e '.wireVersion == 1 and .kind == "success" and
+                 (.payloadBase64 | length > 0) and
+                 (.signatureBase64 | length > 0)'             activation-refresh.json >/dev/null
+
           PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -Atqc "SELECT count(*) FROM licensing_activation_grant WHERE redeemed_at IS NOT NULL" |
             grep -Fx '1'
 
-          echo 'LILIYA_ACTIVATION_E2E={"oneTimeCode":true,"plaintextNotPersisted":true,"serverResolvedIdentity":true,"signedLicenseIssued":true,"lostResponseRetryReplayed":true}'
+          echo 'LILIYA_ACTIVATION_E2E={"oneTimeCode":true,"plaintextNotPersisted":true,"serverResolvedIdentity":true,"signedLicenseIssued":true,"lostResponseRetryReplayed":true,"installCredentialRefresh":true}'
           echo "=== ACTIVATION E2E ACCEPTANCE PASS ==="
 
       - name: Cleanup
