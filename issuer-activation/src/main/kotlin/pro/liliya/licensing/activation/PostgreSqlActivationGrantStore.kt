@@ -139,10 +139,6 @@ class PostgreSqlActivationGrantStore(
                     val current = loadLocked(connection, codeHash)
                         ?: return rollback(connection, ActivationPreparationResult.Invalid)
 
-                    if (!now.isBefore(current.expiresAt)) {
-                        return rollback(connection, ActivationPreparationResult.Expired)
-                    }
-
                     if (current.redeemedAt != null) {
                         return if (
                             current.claimRequestId == requestId &&
@@ -156,6 +152,10 @@ class PostgreSqlActivationGrantStore(
                         } else {
                             rollback(connection, ActivationPreparationResult.AlreadyRedeemed)
                         }
+                    }
+
+                    if (!now.isBefore(current.expiresAt)) {
+                        return rollback(connection, ActivationPreparationResult.Expired)
                     }
 
                     if (
