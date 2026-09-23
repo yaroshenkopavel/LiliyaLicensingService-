@@ -134,7 +134,7 @@ jobs:
 
           ADMIN_CP="issuer-activation-admin/build/install/issuer-activation-admin/lib/*"
           OUTPUT="$(
-            LILIYA_ACTIVATION_ADMIN_JDBC_URL=jdbc:postgresql://127.0.0.1:18690/liliya_activation             LILIYA_ACTIVATION_ADMIN_USERNAME=postgres             LILIYA_ACTIVATION_ADMIN_PASSWORD=activation-admin-fixture               java -cp "$CP" pro.liliya.licensing.activation.ActivationAdminMainKt               provision activation-phone-1 liliya-pro 60
+            LILIYA_ACTIVATION_ADMIN_JDBC_URL=jdbc:postgresql://127.0.0.1:18690/liliya_activation             LILIYA_ACTIVATION_ADMIN_USERNAME=postgres             LILIYA_ACTIVATION_ADMIN_PASSWORD=activation-admin-fixture               java -cp "$ADMIN_CP" pro.liliya.licensing.activation.ActivationAdminMainKt               provision activation-phone-1 liliya-pro 60
           )"
 
           CODE="$(printf '%s\n' "$OUTPUT" | sed -n 's/^ACTIVATION_CODE=//p')"
