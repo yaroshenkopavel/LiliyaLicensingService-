@@ -21,32 +21,46 @@ data class ActivationGrant(
 }
 
 sealed interface ActivationProvisioningResult {
-    data class Created(
-        val code: ActivationCode
-    ) : ActivationProvisioningResult
-
+    data class Created(val code: ActivationCode) : ActivationProvisioningResult
     data object Failed : ActivationProvisioningResult
 }
 
-sealed interface ActivationRedemptionResult {
-    data class Accepted(
-        val subject: String,
-        val productId: String
-    ) : ActivationRedemptionResult
+class ActivationPreparedGrant internal constructor(
+    val subject: String,
+    val productId: String,
+    internal val codeHash: ActivationCodeHash,
+    internal val requestId: String
+) {
+    override fun toString(): String =
+        "ActivationPreparedGrant(subject=<redacted>,productId=$productId,codeHash=<redacted>,requestId=<redacted>)"
+}
 
-    data object Invalid : ActivationRedemptionResult
-    data object Expired : ActivationRedemptionResult
-    data object AlreadyRedeemed : ActivationRedemptionResult
-    data object Unavailable : ActivationRedemptionResult
+sealed interface ActivationPreparationResult {
+    data class Accepted(val grant: ActivationPreparedGrant) : ActivationPreparationResult
+    data class Completed(val responseBody: ByteArray) : ActivationPreparationResult {
+        override fun toString(): String = "Completed(responseBody=<redacted>)"
+    }
+    data object Invalid : ActivationPreparationResult
+    data object Expired : ActivationPreparationResult
+    data object AlreadyRedeemed : ActivationPreparationResult
+    data object InProgress : ActivationPreparationResult
+    data object Unavailable : ActivationPreparationResult
 }
 
 interface ActivationGrantStore {
     fun create(grant: ActivationGrant): Boolean
 
-    fun redeem(
+    fun prepare(
         codeHash: ActivationCodeHash,
+        requestId: String,
         now: Instant
-    ): ActivationRedemptionResult
+    ): ActivationPreparationResult
+
+    fun complete(
+        prepared: ActivationPreparedGrant,
+        responseBody: ByteArray,
+        now: Instant
+    ): Boolean
 }
 
 /**
@@ -65,11 +79,7 @@ class ActivationProvisioningService(
         expiresAt: Instant,
         now: Instant = Instant.now()
     ): ActivationProvisioningResult {
-        if (
-            subject.isBlank() ||
-            productId.isBlank() ||
-            !expiresAt.isAfter(now)
-        ) {
+        if (subject.isBlank() || productId.isBlank() || !expiresAt.isAfter(now)) {
             return ActivationProvisioningResult.Failed
         }
 
@@ -88,7 +98,6 @@ class ActivationProvisioningService(
             code.close()
             return ActivationProvisioningResult.Failed
         }
-
         return ActivationProvisioningResult.Created(code)
     }
 }
@@ -96,18 +105,30 @@ class ActivationProvisioningService(
 class ActivationRedemptionService(
     private val store: ActivationGrantStore
 ) {
-    fun redeem(
+    fun prepare(
         rawCode: String,
+        requestId: String,
         now: Instant = Instant.now()
-    ): ActivationRedemptionResult {
+    ): ActivationPreparationResult {
+        if (requestId.isBlank() || requestId.length > 128) {
+            return ActivationPreparationResult.Invalid
+        }
         val code = ActivationCode.parse(rawCode)
-            ?: return ActivationRedemptionResult.Invalid
+            ?: return ActivationPreparationResult.Invalid
 
         return code.use {
-            store.redeem(
+            store.prepare(
                 codeHash = ActivationCodeHasher.sha256(code),
+                requestId = requestId,
                 now = now
             )
         }
     }
+
+    fun complete(
+        prepared: ActivationPreparedGrant,
+        responseBody: ByteArray,
+        now: Instant = Instant.now()
+    ): Boolean =
+        responseBody.isNotEmpty() && store.complete(prepared, responseBody, now)
 }
