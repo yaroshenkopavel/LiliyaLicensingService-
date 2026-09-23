@@ -19,6 +19,20 @@ class PostgreSqlActivationGrantStore(
     private val dataSource: DataSource
 ) : ActivationGrantStore {
 
+    fun verifySchema() {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT code_hash, subject, product_id, created_at, expires_at, redeemed_at
+                FROM licensing_activation_grant
+                WHERE FALSE
+                """.trimIndent()
+            ).use { statement ->
+                statement.executeQuery().use { }
+            }
+        }
+    }
+
     fun initializeSchema() {
         dataSource.connection.use { connection ->
             connection.createStatement().use { statement ->
