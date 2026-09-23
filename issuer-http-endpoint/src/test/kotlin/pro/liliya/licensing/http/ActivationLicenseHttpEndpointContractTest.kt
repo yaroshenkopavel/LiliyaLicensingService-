@@ -71,7 +71,7 @@ class ActivationLicenseHttpEndpointContractTest {
         )
         assertEquals(503, endpoint.handle(request).status)
         assertEquals(200, endpoint.handle(request).status)
-        assertEquals(listOf(prepared.issuerReceiptId, prepared.issuerReceiptId), issuedIds)
+        assertEquals(listOf<String?>(prepared.issuerReceiptId, prepared.issuerReceiptId), issuedIds)
     }
     @Test
     fun accepted_code_resolves_identity_server_side_and_reaches_issuer_once() {
