@@ -21,7 +21,7 @@ class ProductionScopedRequestAuthenticationTest {
 
         val result = auth.authenticate(
             RequestAuthenticationCredential.of("global-secret".encodeToByteArray()),
-            RequestAuthenticationScope("subject-a", "liliya-pro")
+            RequestAuthenticationScope("subject-a", "liliya-pro", "REFRESH")
         )
 
         assertEquals(RequestAuthenticationResult.Authenticated, result)
@@ -51,17 +51,39 @@ class ProductionScopedRequestAuthenticationTest {
             RequestAuthenticationResult.Authenticated,
             auth.authenticate(
                 RequestAuthenticationCredential.of(secret),
-                RequestAuthenticationScope("subject-a", "liliya-pro")
+                RequestAuthenticationScope("subject-a", "liliya-pro", "REFRESH")
             )
         )
 
         val wrongScope = auth.authenticate(
             RequestAuthenticationCredential.of(secret),
-            RequestAuthenticationScope("subject-b", "liliya-pro")
+            RequestAuthenticationScope("subject-b", "liliya-pro", "REFRESH")
         )
         assertEquals(
             RequestAuthenticationResult.Rejected(RequestAuthenticationFailure.INVALID),
             wrongScope
+        )
+        global.close()
+        secret.fill(0)
+    }
+
+    @Test
+    fun install_secret_cannot_authorize_issue() {
+        val secret = "0123456789abcdef0123456789abcdef".encodeToByteArray()
+        val global = SharedSecretRequestAuthentication("global-secret".encodeToByteArray())
+        val auth = ProductionScopedRequestAuthentication(
+            global = global,
+            installs = verifier { _, _, _ -> InstallCredentialVerificationResult.VALID }
+        )
+
+        val result = auth.authenticate(
+            RequestAuthenticationCredential.of(secret),
+            RequestAuthenticationScope("subject-a", "liliya-pro", "ISSUE")
+        )
+
+        assertEquals(
+            RequestAuthenticationResult.Rejected(RequestAuthenticationFailure.INVALID),
+            result
         )
         global.close()
         secret.fill(0)
@@ -79,7 +101,7 @@ class ProductionScopedRequestAuthenticationTest {
             RequestAuthenticationCredential.of(
                 "0123456789abcdef0123456789abcdef".encodeToByteArray()
             ),
-            RequestAuthenticationScope("subject-a", "liliya-pro")
+            RequestAuthenticationScope("subject-a", "liliya-pro", "REFRESH")
         )
 
         assertEquals(
