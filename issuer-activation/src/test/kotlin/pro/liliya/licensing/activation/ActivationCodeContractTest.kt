@@ -61,10 +61,17 @@ class ActivationCodeContractTest {
                 return true
             }
 
-            override fun redeem(
+            override fun prepare(
                 codeHash: ActivationCodeHash,
+                requestId: String,
                 now: Instant
-            ): ActivationRedemptionResult = error("not used")
+            ): ActivationPreparationResult = error("not used")
+
+            override fun complete(
+                prepared: ActivationPreparedGrant,
+                responseBody: ByteArray,
+                now: Instant
+            ): Boolean = error("not used")
         }
 
         val service = ActivationProvisioningService(
@@ -110,18 +117,28 @@ class ActivationCodeContractTest {
         val store = object : ActivationGrantStore {
             override fun create(grant: ActivationGrant): Boolean = error("not used")
 
-            override fun redeem(
+            override fun prepare(
                 codeHash: ActivationCodeHash,
+                requestId: String,
                 now: Instant
-            ): ActivationRedemptionResult {
+            ): ActivationPreparationResult {
                 calls += 1
-                return ActivationRedemptionResult.Accepted("wrong", "wrong")
+                return ActivationPreparationResult.Invalid
             }
+
+            override fun complete(
+                prepared: ActivationPreparedGrant,
+                responseBody: ByteArray,
+                now: Instant
+            ): Boolean = error("not used")
         }
 
-        val result = ActivationRedemptionService(store).redeem("not-a-liliya-code")
+        val result = ActivationRedemptionService(store).prepare(
+            rawCode = "not-a-liliya-code",
+            requestId = "activation-request-invalid"
+        )
 
-        assertIs<ActivationRedemptionResult.Invalid>(result)
+        assertIs<ActivationPreparationResult.Invalid>(result)
         assertEquals(0, calls)
     }
 
