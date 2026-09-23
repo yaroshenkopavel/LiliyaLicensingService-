@@ -29,10 +29,12 @@ class ActivationPreparedGrant(
     val subject: String,
     val productId: String,
     internal val codeHash: ActivationCodeHash,
-    internal val requestId: String
+    internal val requestId: String,
+    internal val installCredential: InstallCredentialBinding
 ) {
     override fun toString(): String =
-        "ActivationPreparedGrant(subject=<redacted>,productId=$productId,codeHash=<redacted>,requestId=<redacted>)"
+        "ActivationPreparedGrant(subject=<redacted>,productId=$productId," +
+            "codeHash=<redacted>,requestId=<redacted>,installCredential=<redacted>)"
 }
 
 sealed interface ActivationPreparationResult {
@@ -53,6 +55,7 @@ interface ActivationGrantStore {
     fun prepare(
         codeHash: ActivationCodeHash,
         requestId: String,
+        installCredential: InstallCredentialBinding,
         now: Instant
     ): ActivationPreparationResult
 
@@ -108,11 +111,23 @@ class ActivationRedemptionService(
     fun prepare(
         rawCode: String,
         requestId: String,
+        installId: String,
+        installSecret: String,
         now: Instant = Instant.now()
     ): ActivationPreparationResult {
         if (requestId.isBlank() || requestId.length > 128) {
             return ActivationPreparationResult.Invalid
         }
+
+        val binding = try {
+            InstallCredentialBinding(
+                installId = installId,
+                secretHash = InstallCredentialHasher.sha256(installSecret)
+            )
+        } catch (_: IllegalArgumentException) {
+            return ActivationPreparationResult.Invalid
+        }
+
         val code = ActivationCode.parse(rawCode)
             ?: return ActivationPreparationResult.Invalid
 
@@ -120,6 +135,7 @@ class ActivationRedemptionService(
             store.prepare(
                 codeHash = ActivationCodeHasher.sha256(code),
                 requestId = requestId,
+                installCredential = binding,
                 now = now
             )
         }
