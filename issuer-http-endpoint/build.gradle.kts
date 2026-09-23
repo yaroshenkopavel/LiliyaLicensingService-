@@ -11,6 +11,7 @@ dependencies {
     api(project(":issuer-transport-contract"))
     api(project(":issuer-request-auth"))
     api(project(":issuer-activation"))
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
