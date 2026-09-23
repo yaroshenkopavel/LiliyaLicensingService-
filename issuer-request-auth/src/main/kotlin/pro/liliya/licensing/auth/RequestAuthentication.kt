@@ -20,6 +20,19 @@ class RequestAuthenticationCredential private constructor(
     }
 }
 
+data class RequestAuthenticationScope(
+    val subject: String,
+    val productId: String
+) {
+    init {
+        require(subject.isNotBlank()) { "authentication subject must not be blank" }
+        require(productId.isNotBlank()) { "authentication product id must not be blank" }
+    }
+
+    override fun toString(): String =
+        "RequestAuthenticationScope(subject=<redacted>,productId=$productId)"
+}
+
 enum class RequestAuthenticationFailure {
     MISSING,
     INVALID,
@@ -28,6 +41,11 @@ enum class RequestAuthenticationFailure {
 
 sealed interface RequestAuthenticationResult {
     data object Authenticated : RequestAuthenticationResult
+
+    data class AuthenticatedScoped(
+        val scope: RequestAuthenticationScope
+    ) : RequestAuthenticationResult
+
     data class Rejected(val reason: RequestAuthenticationFailure) :
         RequestAuthenticationResult
 }
@@ -35,8 +53,11 @@ sealed interface RequestAuthenticationResult {
 /**
  * Production transport-request authentication seam.
  *
- * This boundary validates only transport-request credentials. It does not create entitlement,
- * License state, subject eligibility, enrollment authority, Capability Authority or Execution
+ * Unscoped authentication is retained for the existing server-owned bootstrap credential.
+ * Per-installation credentials use AuthenticatedScoped and must be matched by the HTTP boundary
+ * against the exact subject/product in the decoded request before issuer processing.
+ *
+ * Authentication does not create entitlement, License state, Capability Authority or Execution
  * permission.
  */
 fun interface RequestAuthenticationPort {
