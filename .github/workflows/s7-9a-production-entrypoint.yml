@@ -171,7 +171,7 @@ jobs:
 
           grep -F 'LICENSING_S7_9A_SCHEMA_EVIDENCE=' s79a-schema.log
 
-          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79a_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_s79a_runtime"             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_s79a_runtime" >/dev/null
+          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79a_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_s79a_runtime"             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_install_credential TO liliya_s79a_runtime" >/dev/null
 
       - name: Start real production entrypoint and prove READY
         shell: bash
