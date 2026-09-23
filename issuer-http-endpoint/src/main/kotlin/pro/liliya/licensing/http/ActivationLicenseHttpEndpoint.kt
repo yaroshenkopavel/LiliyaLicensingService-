@@ -75,8 +75,8 @@ class ActivationLicenseHttpEndpoint(
         }
     }
 
-    private fun decodeCode(body: ByteArray): String? =
-        try {
+    private fun decodeCode(body: ByteArray): String? {
+        return try {
             val root = JSON.readTree(body)
             if (!root.isObject) return null
             if (root.path("wireVersion").asInt(-1) != 1) return null
@@ -87,6 +87,7 @@ class ActivationLicenseHttpEndpoint(
         } catch (_: Exception) {
             null
         }
+    }
 
     private fun statusFor(reason: LicenseServiceFailure): Int =
         when (reason) {
