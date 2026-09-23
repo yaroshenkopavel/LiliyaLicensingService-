@@ -64,6 +64,7 @@ class ActivationCodeContractTest {
             override fun prepare(
                 codeHash: ActivationCodeHash,
                 requestId: String,
+                installCredential: InstallCredentialBinding,
                 now: Instant
             ): ActivationPreparationResult = error("not used")
 
@@ -120,6 +121,7 @@ class ActivationCodeContractTest {
             override fun prepare(
                 codeHash: ActivationCodeHash,
                 requestId: String,
+                installCredential: InstallCredentialBinding,
                 now: Instant
             ): ActivationPreparationResult {
                 calls += 1
@@ -135,7 +137,9 @@ class ActivationCodeContractTest {
 
         val result = ActivationRedemptionService(store).prepare(
             rawCode = "not-a-liliya-code",
-            requestId = "activation-request-invalid"
+            requestId = "activation-request-invalid",
+            installId = "install-invalid-01",
+            installSecret = "0123456789abcdef0123456789abcdef"
         )
 
         assertIs<ActivationPreparationResult.Invalid>(result)
