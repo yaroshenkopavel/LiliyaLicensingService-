@@ -1,8 +1,7 @@
 package pro.liliya.licensing.http
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import java.util.UUID
-import pro.liliya.licensing.activation.ActivationRedemptionResult
+import pro.liliya.licensing.activation.ActivationPreparationResult
 import pro.liliya.licensing.activation.ActivationRedemptionService
 import pro.liliya.licensing.issuer.LicensingIssuerCoordinator
 import pro.liliya.licensing.issuer.LicensingIssuerResult
@@ -36,24 +35,38 @@ class ActivationLicenseHttpEndpoint(
         if (request.path != PATH) return empty(404)
         if (request.method != LicenseHttpMethod.POST) return empty(405)
 
-        val code = decodeCode(request.body) ?: return rejected(400, LicenseServiceFailure.INVALID_REQUEST)
+        val activation = decodeActivation(request.body)
+            ?: return rejected(400, LicenseServiceFailure.INVALID_REQUEST)
 
-        val accepted = when (val result = redemption.redeem(code)) {
-            is ActivationRedemptionResult.Accepted -> result
-            ActivationRedemptionResult.Invalid,
-            ActivationRedemptionResult.Expired,
-            ActivationRedemptionResult.AlreadyRedeemed ->
+        val prepared = when (
+            val result = redemption.prepare(
+                rawCode = activation.code,
+                requestId = activation.requestId
+            )
+        ) {
+            is ActivationPreparationResult.Accepted -> result.grant
+            is ActivationPreparationResult.Completed ->
+                return LicenseHttpResponse(
+                    status = 200,
+                    contentType = LicenseHttpEndpoint.JSON,
+                    body = result.responseBody
+                )
+            ActivationPreparationResult.Invalid,
+            ActivationPreparationResult.Expired,
+            ActivationPreparationResult.AlreadyRedeemed ->
                 return rejected(401, LicenseServiceFailure.AUTHENTICATION_REQUIRED)
-            ActivationRedemptionResult.Unavailable ->
+            ActivationPreparationResult.InProgress ->
+                return rejected(409, LicenseServiceFailure.IDEMPOTENCY_CONFLICT)
+            ActivationPreparationResult.Unavailable ->
                 return rejected(503, LicenseServiceFailure.ENTITLEMENT_SOURCE_UNAVAILABLE)
         }
 
         val issueRequest = LicenseServiceRequest(
             protocolVersion = LicenseProtocolVersion(1),
             operation = LicenseOperation.ISSUE,
-            productId = accepted.productId,
-            subjectReference = accepted.subject,
-            requestId = UUID.randomUUID().toString()
+            productId = prepared.productId,
+            subjectReference = prepared.subject,
+            requestId = activation.requestId
         )
 
         return when (val result = try {
@@ -61,33 +74,52 @@ class ActivationLicenseHttpEndpoint(
         } catch (_: Exception) {
             null
         }) {
-            is LicensingIssuerResult.Issued ->
-                wire(
-                    200,
+            is LicensingIssuerResult.Issued -> {
+                val response = LicenseWireJsonCodec.encodeResponse(
                     LicenseWireResponse.SignedSuccess(
                         wireVersion = LicenseWireJsonCodec.currentVersion,
                         envelope = result.envelope
                     )
                 )
+                if (!redemption.complete(prepared, response)) {
+                    rejected(503, LicenseServiceFailure.ENTITLEMENT_SOURCE_UNAVAILABLE)
+                } else {
+                    LicenseHttpResponse(
+                        status = 200,
+                        contentType = LicenseHttpEndpoint.JSON,
+                        body = response
+                    )
+                }
+            }
             is LicensingIssuerResult.Rejected ->
                 rejected(statusFor(result.reason), result.reason)
             null -> empty(500)
         }
     }
 
-    private fun decodeCode(body: ByteArray): String? {
+    private fun decodeActivation(body: ByteArray): ActivationRequest? {
         return try {
             val root = JSON.readTree(body)
             if (!root.isObject) return null
             if (root.path("wireVersion").asInt(-1) != 1) return null
             if (root.path("kind").asText("") != "activate") return null
             val code = root.path("activationCode")
-            if (!code.isTextual) return null
-            code.asText().takeIf { it.isNotBlank() && it.length <= 128 }
+            val requestId = root.path("activationRequestId")
+            if (!code.isTextual || !requestId.isTextual) return null
+            val codeValue = code.asText()
+            val requestIdValue = requestId.asText()
+            if (codeValue.isBlank() || codeValue.length > 128) return null
+            if (requestIdValue.isBlank() || requestIdValue.length > 128) return null
+            ActivationRequest(codeValue, requestIdValue)
         } catch (_: Exception) {
             null
         }
     }
+
+    private data class ActivationRequest(
+        val code: String,
+        val requestId: String
+    )
 
     private fun statusFor(reason: LicenseServiceFailure): Int =
         when (reason) {
