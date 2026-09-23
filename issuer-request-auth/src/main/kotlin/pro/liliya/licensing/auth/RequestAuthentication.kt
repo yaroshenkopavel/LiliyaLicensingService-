@@ -48,15 +48,17 @@ fun interface RequestAuthenticationPort {
 
 data class RequestAuthenticationScope(
     val subject: String,
-    val productId: String
+    val productId: String,
+    val operation: String
 ) {
     init {
         require(subject.isNotBlank()) { "authentication subject must not be blank" }
         require(productId.isNotBlank()) { "authentication productId must not be blank" }
+        require(operation.isNotBlank()) { "authentication operation must not be blank" }
     }
 
     override fun toString(): String =
-        "RequestAuthenticationScope(subject=<redacted>,productId=$productId)"
+        "RequestAuthenticationScope(subject=<redacted>,productId=$productId,operation=$operation)"
 }
 
 /**
