@@ -3,10 +3,13 @@ package pro.liliya.licensing.deployment
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import org.postgresql.ds.PGSimpleDataSource
+import pro.liliya.licensing.activation.ActivationRedemptionService
+import pro.liliya.licensing.activation.PostgreSqlActivationGrantStore
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
+import pro.liliya.licensing.http.ActivationLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpEndpoint
@@ -321,18 +324,23 @@ class LicensingProductionService private constructor(
                 )
             )
 
-            val endpoint = AuthenticatedLicenseHttpEndpoint(
-                delegate = LicenseHttpEndpoint(
-                    LicensingIssuerCoordinator(
-                        validator = LicenseRequestValidator(
-                            supportedVersion = LicenseProtocolVersion(1)
-                        ),
-                        source = entitlementSource,
-                        transactions = transactions,
-                        signing = LicenseSigningComposition(signer)
-                    )
+            val coordinator = LicensingIssuerCoordinator(
+                validator = LicenseRequestValidator(
+                    supportedVersion = LicenseProtocolVersion(1)
                 ),
+                source = entitlementSource,
+                transactions = transactions,
+                signing = LicenseSigningComposition(signer)
+            )
+            val endpoint = AuthenticatedLicenseHttpEndpoint(
+                delegate = LicenseHttpEndpoint(coordinator),
                 authentication = authentication
+            )
+            val activationEndpoint = ActivationLicenseHttpEndpoint(
+                redemption = ActivationRedemptionService(
+                    PostgreSqlActivationGrantStore(dataSource)
+                ),
+                coordinator = coordinator
             )
             val serviceStateEndpoint = AuthenticatedServiceStateHttpEndpoint(
                 service = serviceStateService,
@@ -340,7 +348,8 @@ class LicensingProductionService private constructor(
             )
             val router = LicensingHttpRouter(
                 entitlement = endpoint,
-                serviceState = serviceStateEndpoint
+                serviceState = serviceStateEndpoint,
+                activation = activationEndpoint
             )
 
             val tlsPassword = run {
