@@ -320,11 +320,38 @@ jobs:
           docker exec liliya-s79c-postgres pg_isready -U postgres -d liliya_s79c >/dev/null
           curl -fsS --cacert .s79c-ob/tls/ca.crt https://127.0.0.1:18611/v1/sys/health >/dev/null
 
+      - name: Apply additive N+1 schemas without touching authoritative state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ADMIN_CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          PG_ADMIN="$(cat .s79c-pg-admin)"
+
+          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18610/liliya_s79c \
+          S7_9A_POSTGRES_ADMIN_USER=postgres \
+          S7_9A_POSTGRES_ADMIN_PASSWORD="$PG_ADMIN" \
+            java -cp "$ADMIN_CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres \
+            psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c \
+            -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_s79c_runtime" \
+            -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_s79c_runtime" \
+            -c "INSERT INTO licensing_entitlement(
+                  license_id, subject, product_id, features, version, signing_key_id,
+                  issued_at, not_before, expires_at, offline_lease_until, revocation_epoch
+                ) VALUES (
+                  's79c-production-license', 's7-9c-rollback-subject', 'liliya-pro',
+                  ARRAY['model.local'], 1, 's7-9a-logical-key',
+                  now(), now(), now() + interval '30 days',
+                  now() + interval '7 days', 1
+                )
+                ON CONFLICT (subject, product_id) DO NOTHING" >/dev/null
+
       - name: Deploy incompatible application version N+1 and prove fail closed
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79c-ob-token)"
           AUTH_SECRET="$(cat .s79c-auth)"
           TLS_PASS="$(cat .s79c-https-pass)"
