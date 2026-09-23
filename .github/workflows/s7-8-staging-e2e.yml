@@ -402,7 +402,7 @@ jobs:
           docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s78-postgres \
             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s78 \
             -c "GRANT USAGE ON SCHEMA public TO liliya_s78_runtime" \
-            -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s78_runtime" >/dev/null
+            -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s78_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_issue_receipt TO liliya_s78_runtime" >/dev/null
 
       - name: Phase 1 staging ISSUE REFRESH
         shell: bash

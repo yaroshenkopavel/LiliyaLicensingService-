@@ -115,7 +115,7 @@ jobs:
 
           S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18690/liliya_activation           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD=activation-admin-fixture             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt
 
-          PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_activation_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_activation_runtime"             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_install_credential TO liliya_activation_runtime" >/dev/null
+          PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_issue_receipt TO liliya_activation_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_activation_runtime"             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_activation_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_install_credential TO liliya_activation_runtime" >/dev/null
 
       - name: Create entitlement and one-time activation code
         shell: bash
