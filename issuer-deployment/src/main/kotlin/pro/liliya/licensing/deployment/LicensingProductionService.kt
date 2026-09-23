@@ -6,6 +6,7 @@ import org.postgresql.ds.PGSimpleDataSource
 import pro.liliya.licensing.activation.ActivationRedemptionService
 import pro.liliya.licensing.activation.PostgreSqlActivationGrantStore
 import pro.liliya.licensing.activation.InstallCredentialVerificationResult
+import pro.liliya.licensing.activation.InstallCredentialVerifier
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
@@ -106,7 +107,7 @@ class SharedSecretRequestAuthentication(
 
 class ProductionScopedRequestAuthentication(
     private val global: SharedSecretRequestAuthentication,
-    private val installs: PostgreSqlActivationGrantStore
+    private val installs: InstallCredentialVerifier
 ) : ScopedRequestAuthenticationPort {
     override fun authenticate(
         credential: RequestAuthenticationCredential?,
