@@ -133,7 +133,7 @@ class ActivationLicenseHttpEndpointContractTest {
         assertEquals(0, issuerCalls)
     }
 
-    private fun fixedStore(result: ActivationRedemptionResult): ActivationGrantStore =
+    private fun fixedStore(result: ActivationPreparationResult): ActivationGrantStore =
         object : ActivationGrantStore {
             override fun create(grant: ActivationGrant): Boolean = error("not used")
             override fun complete(
