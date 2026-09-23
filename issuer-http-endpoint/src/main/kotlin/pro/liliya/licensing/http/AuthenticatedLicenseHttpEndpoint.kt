@@ -49,7 +49,8 @@ class AuthenticatedLicenseHttpEndpoint(
                 request.authentication,
                 RequestAuthenticationScope(
                     subject = decoded.request.subjectReference,
-                    productId = decoded.request.productId
+                    productId = decoded.request.productId,
+                    operation = decoded.request.operation.name
                 )
             )
         ) {
