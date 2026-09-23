@@ -193,10 +193,27 @@ jobs:
                  (.payloadBase64 | length > 0) and
                  (.signatureBase64 | length > 0)'             activation-refresh.json >/dev/null
 
+          ISSUE_BODY='{"wireVersion":1,"kind":"request","protocolVersion":1,"operation":"ISSUE","productId":"liliya-pro","subjectReference":"activation-phone-1","requestId":"activation-issue-with-install-secret"}'
+          ISSUE_STATUS="$(
+            curl -sS --cacert .activation-tls/server.crt               -o activation-install-issue.json -w '%{http_code}'               -H "Content-Type: application/json"               -H "Authorization: Bearer $INSTALL_SECRET"               -d "$ISSUE_BODY"               https://127.0.0.1:18692/v1/license
+          )"
+          test "$ISSUE_STATUS" = "401"
+
+          PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -Atqc "SELECT count(*) FROM licensing_install_credential
+                   WHERE install_id = 'activation-install-01'
+                     AND subject = 'activation-phone-1'
+                     AND product_id = 'liliya-pro'
+                     AND disabled_at IS NULL" |
+            grep -Fx '1'
+
+          PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -Atqc "SELECT count(*) FROM licensing_install_credential
+                   WHERE encode(secret_hash, 'hex') = lower('$INSTALL_SECRET')" |
+            grep -Fx '0'
+
           PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -Atqc "SELECT count(*) FROM licensing_activation_grant WHERE redeemed_at IS NOT NULL" |
             grep -Fx '1'
 
-          echo 'LILIYA_ACTIVATION_E2E={"oneTimeCode":true,"plaintextNotPersisted":true,"serverResolvedIdentity":true,"signedLicenseIssued":true,"lostResponseRetryReplayed":true,"installCredentialRefresh":true}'
+          echo 'LILIYA_ACTIVATION_E2E={"oneTimeCode":true,"plaintextNotPersisted":true,"serverResolvedIdentity":true,"signedLicenseIssued":true,"lostResponseRetryReplayed":true,"installCredentialRefresh":true,"installCredentialIssueRejected":true,"installSecretStoredHashed":true}'
           echo "=== ACTIVATION E2E ACCEPTANCE PASS ==="
 
       - name: Cleanup
