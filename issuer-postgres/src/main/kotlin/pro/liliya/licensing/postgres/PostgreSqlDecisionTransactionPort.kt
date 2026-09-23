@@ -9,6 +9,8 @@ import pro.liliya.licensing.issuer.DecisionState
 import pro.liliya.licensing.issuer.DecisionTransactionFailure
 import pro.liliya.licensing.issuer.DecisionTransactionPort
 import pro.liliya.licensing.issuer.DecisionTransactionResult
+import pro.liliya.licensing.issuer.IdempotentDecisionTransactionPort
+import pro.liliya.licensing.issuer.IssueReceiptLookup
 import pro.liliya.licensing.signing.SignedLicenseEnvelope
 import pro.liliya.licensing.signing.SigningKeyReference
 import pro.liliya.licensing.servicestate.CurrentDecisionStateReadPort
@@ -27,7 +29,7 @@ data class PersistedDecisionRecord(
  */
 class PostgreSqlDecisionTransactionPort(
     private val dataSource: DataSource
-) : DecisionTransactionPort, CurrentDecisionStateReadPort {
+) : IdempotentDecisionTransactionPort, CurrentDecisionStateReadPort {
 
     fun initializeSchema() {
         dataSource.connection.use { connection ->
@@ -47,6 +49,22 @@ class PostgreSqlDecisionTransactionPort(
                             canonical_payload BYTEA NOT NULL CHECK (octet_length(canonical_payload) > 0),
                             signature BYTEA NOT NULL CHECK (octet_length(signature) > 0),
                             PRIMARY KEY (subject, product_id)
+                        )
+                        """.trimIndent()
+                    )
+                    statement.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS licensing_issue_receipt (
+                            request_id TEXT PRIMARY KEY,
+                            request_subject TEXT NOT NULL,
+                            request_product_id TEXT NOT NULL,
+                            replay_sequence BIGINT NOT NULL,
+                            revocation_epoch BIGINT NOT NULL,
+                            envelope_schema_version BIGINT NOT NULL,
+                            algorithm TEXT NOT NULL,
+                            signing_key_reference TEXT NOT NULL,
+                            canonical_payload BYTEA NOT NULL,
+                            signature BYTEA NOT NULL
                         )
                         """.trimIndent()
                     )
@@ -146,12 +164,42 @@ class PostgreSqlDecisionTransactionPort(
     override fun transact(
         scope: DecisionScope,
         block: (DecisionState?) -> DecisionCandidate?
+    ): DecisionTransactionResult = transactInternal(scope, scope, null, block)
+
+    override fun transactOnce(
+        scope: DecisionScope,
+        requestScope: DecisionScope,
+        requestId: String,
+        block: (DecisionState?) -> DecisionCandidate?
+    ): DecisionTransactionResult = transactInternal(scope, requestScope, requestId, block)
+
+    private fun transactInternal(
+        scope: DecisionScope,
+        requestScope: DecisionScope,
+        requestId: String?,
+        block: (DecisionState?) -> DecisionCandidate?
     ): DecisionTransactionResult {
         return try {
             dataSource.connection.use { connection ->
                 connection.autoCommit = false
                 connection.transactionIsolation = Connection.TRANSACTION_READ_COMMITTED
                 try {
+                    if (requestId != null) {
+                        acquireRequestLock(connection, requestId)
+                        when (val receipt = readReceipt(connection, requestId)) {
+                            is IssueReceiptLookup.Found -> {
+                                connection.commit()
+                                return if (receipt.requestScope == requestScope) {
+                                    DecisionTransactionResult.Committed(receipt.state, receipt.envelope)
+                                } else {
+                                    DecisionTransactionResult.Rejected(DecisionTransactionFailure.IDEMPOTENCY_CONFLICT)
+                                }
+                            }
+                            IssueReceiptLookup.Unavailable ->
+                                return rollbackRejected(connection, DecisionTransactionFailure.INTERNAL_FAILURE)
+                            IssueReceiptLookup.Missing -> Unit
+                        }
+                    }
                     acquireScopeLock(connection, scope)
                     val current = loadLocked(connection, scope)
                     val candidate = block(current?.state)
@@ -171,6 +219,8 @@ class PostgreSqlDecisionTransactionPort(
                         return rollbackRejected(connection, DecisionTransactionFailure.CONFLICT)
                     }
 
+                    if (requestId != null) insertReceipt(connection, requestId, requestScope, candidate)
+
                     connection.commit()
                     DecisionTransactionResult.Committed(candidate.nextState, candidate.envelope)
                 } catch (_: SQLException) {
@@ -183,6 +233,64 @@ class PostgreSqlDecisionTransactionPort(
             }
         } catch (_: SQLException) {
             DecisionTransactionResult.Rejected(DecisionTransactionFailure.INTERNAL_FAILURE)
+        }
+    }
+
+    override fun lookup(requestId: String): IssueReceiptLookup =
+        try {
+            dataSource.connection.use { readReceipt(it, requestId) }
+        } catch (_: SQLException) {
+            IssueReceiptLookup.Unavailable
+        } catch (_: RuntimeException) {
+            IssueReceiptLookup.Unavailable
+        }
+
+    private fun acquireRequestLock(connection: Connection, requestId: String) {
+        connection.prepareStatement("SELECT pg_advisory_xact_lock(hashtext(?), 19288103)").use { statement ->
+            statement.setString(1, requestId)
+            statement.executeQuery().use { result -> check(result.next()) }
+        }
+    }
+
+    private fun readReceipt(connection: Connection, requestId: String): IssueReceiptLookup =
+        connection.prepareStatement(
+            """SELECT request_subject, request_product_id, replay_sequence, revocation_epoch,
+                      envelope_schema_version, algorithm, signing_key_reference,
+                      canonical_payload, signature FROM licensing_issue_receipt WHERE request_id = ?"""
+        ).use { statement ->
+            statement.setString(1, requestId)
+            statement.executeQuery().use { result ->
+                if (!result.next()) IssueReceiptLookup.Missing else IssueReceiptLookup.Found(
+                    DecisionScope(result.getString("request_subject"), result.getString("request_product_id")),
+                    DecisionState(result.getLong("replay_sequence"), result.getLong("revocation_epoch")),
+                    SignedLicenseEnvelope(
+                        pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion(result.getLong("envelope_schema_version")),
+                        pro.liliya.licensing.signing.SigningAlgorithm(result.getString("algorithm")),
+                        SigningKeyReference(result.getString("signing_key_reference")),
+                        result.getBytes("canonical_payload"), result.getBytes("signature")
+                    )
+                )
+            }
+        }
+
+    private fun insertReceipt(connection: Connection, requestId: String, requestScope: DecisionScope, candidate: DecisionCandidate) {
+        connection.prepareStatement(
+            """INSERT INTO licensing_issue_receipt (
+                request_id, request_subject, request_product_id, replay_sequence, revocation_epoch,
+                envelope_schema_version, algorithm, signing_key_reference, canonical_payload, signature
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        ).use { statement ->
+            statement.setString(1, requestId)
+            statement.setString(2, requestScope.subject)
+            statement.setString(3, requestScope.productId)
+            statement.setLong(4, candidate.nextState.replaySequence)
+            statement.setLong(5, candidate.nextState.revocationEpoch)
+            statement.setLong(6, candidate.envelope.schemaVersion.value)
+            statement.setString(7, candidate.envelope.algorithm.value)
+            statement.setString(8, candidate.envelope.keyReference.value)
+            statement.setBytes(9, candidate.envelope.copyCanonicalPayload())
+            statement.setBytes(10, candidate.envelope.copySignature())
+            check(statement.executeUpdate() == 1)
         }
     }
 
@@ -202,6 +310,13 @@ class PostgreSqlDecisionTransactionPort(
 
     fun deleteForTest(scope: DecisionScope) {
         dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "DELETE FROM licensing_issue_receipt WHERE request_subject = ? AND request_product_id = ?"
+            ).use { statement ->
+                statement.setString(1, scope.subject)
+                statement.setString(2, scope.productId)
+                statement.executeUpdate()
+            }
             connection.prepareStatement(
                 "DELETE FROM licensing_decision_state WHERE subject = ? AND product_id = ?"
             ).use { statement ->

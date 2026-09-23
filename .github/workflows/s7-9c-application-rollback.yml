@@ -334,6 +334,7 @@ jobs:
 
           docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres \
             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c \
+            -c "GRANT SELECT, INSERT ON TABLE licensing_issue_receipt TO liliya_s79c_runtime" \
             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_s79c_runtime" \
             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_s79c_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_install_credential TO liliya_s79c_runtime" \
             -c "INSERT INTO licensing_entitlement(

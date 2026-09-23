@@ -32,6 +32,11 @@ class ActivationPreparedGrant(
     internal val requestId: String,
     internal val installCredential: InstallCredentialBinding
 ) {
+    /** Private issuer namespace prevents unrelated grants from sharing one signing receipt. */
+    val issuerReceiptId: String = "activation:" +
+        codeHash.copyBytes().joinToString("") { "%02x".format(it.toInt() and 0xff) } +
+        ":" + requestId
+
     override fun toString(): String =
         "ActivationPreparedGrant(subject=<redacted>,productId=$productId," +
             "codeHash=<redacted>,requestId=<redacted>,installCredential=<redacted>)"

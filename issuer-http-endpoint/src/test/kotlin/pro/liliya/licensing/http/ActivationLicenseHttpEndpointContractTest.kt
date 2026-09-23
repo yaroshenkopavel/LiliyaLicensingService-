@@ -13,14 +13,66 @@ import pro.liliya.licensing.activation.ActivationRedemptionService
 import pro.liliya.licensing.activation.InstallCredentialBinding
 import pro.liliya.licensing.activation.InstallCredentialHasher
 import pro.liliya.licensing.issuer.LicensingIssuerResult
+import pro.liliya.licensing.issuer.DecisionState
 import pro.liliya.licensing.protocol.LicenseOperation
 import pro.liliya.licensing.protocol.LicenseServiceFailure
 import pro.liliya.licensing.protocol.LicenseServiceRequest
 import pro.liliya.licensing.transport.LicenseWireDecodeResult
 import pro.liliya.licensing.transport.LicenseWireJsonCodec
 import pro.liliya.licensing.transport.LicenseWireResponse
+import pro.liliya.licensing.signing.SignedLicenseEnvelope
+import pro.liliya.licensing.signing.SigningAlgorithm
+import pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion
+import pro.liliya.licensing.signing.SigningKeyReference
 
 class ActivationLicenseHttpEndpointContractTest {
+    @Test
+    fun completion_failure_retries_same_grant_bound_issuer_request() {
+        val prepared = ActivationPreparedGrant(
+            subject = "phone-subject",
+            productId = "liliya-pro",
+            codeHash = ActivationCodeHash.of(ByteArray(32) { 7 }),
+            requestId = "activation-request-1",
+            installCredential = InstallCredentialBinding(
+                "install-phone-01",
+                InstallCredentialHasher.sha256("0123456789abcdef0123456789abcdef")
+            )
+        )
+        var completeCalls = 0
+        val store = object : ActivationGrantStore {
+            override fun create(grant: ActivationGrant): Boolean = error("not used")
+            override fun prepare(
+                codeHash: ActivationCodeHash,
+                requestId: String,
+                installCredential: InstallCredentialBinding,
+                now: Instant
+            ): ActivationPreparationResult = ActivationPreparationResult.Accepted(prepared)
+            override fun complete(
+                prepared: ActivationPreparedGrant,
+                responseBody: ByteArray,
+                now: Instant
+            ): Boolean = ++completeCalls == 2
+        }
+        val issuedIds = mutableListOf<String?>()
+        val signed = SignedLicenseEnvelope(
+            SigningEnvelopeSchemaVersion(1), SigningAlgorithm("TEST-ED25519"),
+            SigningKeyReference("test-key"), byteArrayOf(1), byteArrayOf(2)
+        )
+        val endpoint = ActivationLicenseHttpEndpoint(
+            ActivationRedemptionService(store),
+            LicensingIssuerProcessor { request ->
+                issuedIds += request.requestId
+                LicensingIssuerResult.Issued(DecisionState(0, 0), signed)
+            }
+        )
+        val request = LicenseHttpRequest(
+            LicenseHttpMethod.POST, ActivationLicenseHttpEndpoint.PATH,
+            activationBody(validCode())
+        )
+        assertEquals(503, endpoint.handle(request).status)
+        assertEquals(200, endpoint.handle(request).status)
+        assertEquals(listOf<String?>(prepared.issuerReceiptId, prepared.issuerReceiptId), issuedIds)
+    }
     @Test
     fun accepted_code_resolves_identity_server_side_and_reaches_issuer_once() {
         var captured: LicenseServiceRequest? = null

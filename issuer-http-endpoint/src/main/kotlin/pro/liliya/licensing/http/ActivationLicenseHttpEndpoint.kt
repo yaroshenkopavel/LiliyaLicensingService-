@@ -68,7 +68,7 @@ class ActivationLicenseHttpEndpoint(
             operation = LicenseOperation.ISSUE,
             productId = prepared.productId,
             subjectReference = prepared.subject,
-            requestId = activation.requestId
+            requestId = prepared.issuerReceiptId
         )
 
         return when (val result = try {

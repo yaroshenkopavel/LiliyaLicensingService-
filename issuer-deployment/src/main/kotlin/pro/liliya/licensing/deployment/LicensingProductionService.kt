@@ -184,6 +184,12 @@ class PostgreSqlRuntimeReadinessDependency(
                         result.metaData.columnCount
                     }
                 }
+                connection.prepareStatement(
+                    "SELECT request_id, request_subject, request_product_id, canonical_payload, " +
+                        "signature FROM licensing_issue_receipt WHERE 1 = 0"
+                ).use { statement ->
+                    statement.executeQuery().use { result -> result.metaData.columnCount }
+                }
             }
             LicensingRuntimeDependencyResult.Ready
         } catch (_: Exception) {

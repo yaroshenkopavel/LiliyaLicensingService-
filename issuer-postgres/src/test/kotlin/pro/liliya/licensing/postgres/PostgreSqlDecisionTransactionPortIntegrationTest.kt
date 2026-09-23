@@ -1,6 +1,7 @@
 package pro.liliya.licensing.postgres
 
 import java.util.concurrent.CountDownLatch
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -84,6 +85,74 @@ class PostgreSqlDecisionTransactionPortIntegrationTest {
             persisted.envelope.copyCanonicalPayload()
         )
         assertContentEquals(envelope.copySignature(), persisted.envelope.copySignature())
+    }
+
+    @Test
+    fun receipt_replays_original_envelope_after_a_later_issue_without_signing_again() {
+        val requestId = "activation-${UUID.randomUUID()}"
+        val first = assertIs<DecisionTransactionResult.Committed>(
+            port.transactOnce(scope, scope, requestId) {
+                DecisionCandidate(DecisionState(0, 3), envelope(0))
+            }
+        )
+        assertIs<DecisionTransactionResult.Committed>(
+            port.transact(scope) { DecisionCandidate(DecisionState(1, 3), envelope(1)) }
+        )
+
+        val reopened = PostgreSqlDecisionTransactionPort(dataSource())
+        reopened.initializeSchema()
+        val replay = assertIs<DecisionTransactionResult.Committed>(
+            reopened.transactOnce(scope, scope, requestId) { error("repeat must never sign") }
+        )
+        assertEquals(DecisionState(0, 3), replay.state)
+        assertContentEquals(first.envelope.copyCanonicalPayload(), replay.envelope.copyCanonicalPayload())
+        assertContentEquals(first.envelope.copySignature(), replay.envelope.copySignature())
+        assertEquals(DecisionState(1, 3), reopened.inspect(scope)?.state)
+        assertIs<pro.liliya.licensing.issuer.IssueReceiptLookup.Found>(reopened.lookup(requestId))
+        assertEquals(
+            DecisionTransactionFailure.IDEMPOTENCY_CONFLICT,
+            assertIs<DecisionTransactionResult.Rejected>(
+                reopened.transactOnce(scope, DecisionScope("other-subject", scope.productId), requestId) {
+                    error("scope mismatch must never sign")
+                }
+            ).reason
+        )
+    }
+
+    @Test
+    fun receipt_write_failure_rolls_back_decision_state() {
+        val requestId = "activation-${UUID.randomUUID()}"
+        dataSource().connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    """CREATE OR REPLACE FUNCTION fail_issue_receipt() RETURNS trigger AS '
+                       BEGIN RAISE EXCEPTION ''forced receipt failure''; END;
+                       ' LANGUAGE plpgsql"""
+                )
+                statement.execute(
+                    """CREATE TRIGGER licensing_receipt_fail_write BEFORE INSERT
+                       ON licensing_issue_receipt FOR EACH ROW EXECUTE FUNCTION fail_issue_receipt()"""
+                )
+            }
+        }
+        try {
+            val result = port.transactOnce(scope, scope, requestId) {
+                DecisionCandidate(DecisionState(0, 3), envelope(0))
+            }
+            assertEquals(
+                DecisionTransactionFailure.INTERNAL_FAILURE,
+                assertIs<DecisionTransactionResult.Rejected>(result).reason
+            )
+            assertEquals(null, port.inspect(scope))
+            assertIs<pro.liliya.licensing.issuer.IssueReceiptLookup.Missing>(port.lookup(requestId))
+        } finally {
+            dataSource().connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute("DROP TRIGGER IF EXISTS licensing_receipt_fail_write ON licensing_issue_receipt")
+                    statement.execute("DROP FUNCTION IF EXISTS fail_issue_receipt()")
+                }
+            }
+        }
     }
 
     @Test

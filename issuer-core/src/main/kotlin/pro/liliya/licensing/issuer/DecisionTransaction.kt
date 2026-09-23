@@ -28,6 +28,7 @@ sealed interface DecisionTransactionResult {
 
 enum class DecisionTransactionFailure {
     CONFLICT,
+    IDEMPOTENCY_CONFLICT,
     REJECTED,
     INTERNAL_FAILURE
 }
@@ -35,6 +36,23 @@ enum class DecisionTransactionFailure {
 fun interface DecisionTransactionPort {
     fun transact(
         scope: DecisionScope,
+        block: (DecisionState?) -> DecisionCandidate?
+    ): DecisionTransactionResult
+}
+
+sealed interface IssueReceiptLookup {
+    data object Missing : IssueReceiptLookup
+    data class Found(val requestScope: DecisionScope, val state: DecisionState, val envelope: SignedLicenseEnvelope) : IssueReceiptLookup
+    data object Unavailable : IssueReceiptLookup
+}
+
+/** The receipt and replay state must commit in the same authoritative transaction. */
+interface IdempotentDecisionTransactionPort : DecisionTransactionPort {
+    fun lookup(requestId: String): IssueReceiptLookup
+    fun transactOnce(
+        scope: DecisionScope,
+        requestScope: DecisionScope,
+        requestId: String,
         block: (DecisionState?) -> DecisionCandidate?
     ): DecisionTransactionResult
 }
