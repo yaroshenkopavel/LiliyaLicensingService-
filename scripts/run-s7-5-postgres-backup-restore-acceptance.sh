@@ -57,7 +57,7 @@ echo "=== S7.5 SEED AUTHORITATIVE STATE ==="
 "${GRADLE[@]}" :issuer-postgres:test   --tests "pro.liliya.licensing.postgres.PostgreSqlBackupRestoreAcceptanceTest.seed_authoritative_state_for_backup"   --rerun-tasks   --console=plain
 
 echo "=== S7.5 CREATE LEAST-PRIVILEGE RUNTIME ROLE ==="
-docker exec   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   psql -v ON_ERROR_STOP=1     -U "$ADMIN_USER"     -d "$DATABASE"     -v runtime_user="$RUNTIME_USER"     -v runtime_password="$RUNTIME_PASSWORD"     -c "CREATE ROLE $RUNTIME_USER LOGIN PASSWORD '$RUNTIME_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"     -c "GRANT CONNECT ON DATABASE $DATABASE TO $RUNTIME_USER"     -c "GRANT USAGE ON SCHEMA public TO $RUNTIME_USER"     -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO $RUNTIME_USER"     >/dev/null
+docker exec   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   psql -v ON_ERROR_STOP=1     -U "$ADMIN_USER"     -d "$DATABASE"     -v runtime_user="$RUNTIME_USER"     -v runtime_password="$RUNTIME_PASSWORD"     -c "CREATE ROLE $RUNTIME_USER LOGIN PASSWORD '$RUNTIME_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"     -c "GRANT CONNECT ON DATABASE $DATABASE TO $RUNTIME_USER"     -c "GRANT USAGE ON SCHEMA public TO $RUNTIME_USER"     -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO $RUNTIME_USER"     -c "GRANT SELECT, INSERT ON TABLE licensing_issue_receipt TO $RUNTIME_USER"     >/dev/null
 
 ROLE_FLAGS="$(
   docker exec     -e PGPASSWORD="$ADMIN_PASSWORD"     "$CONTAINER_NAME"     psql -At -U "$ADMIN_USER" -d "$DATABASE"     -c "SELECT rolsuper || ':' || rolcreatedb || ':' || rolcreaterole || ':' || rolreplication || ':' || rolbypassrls FROM pg_roles WHERE rolname = '$RUNTIME_USER'"
@@ -76,6 +76,7 @@ docker exec   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   pg_dump     
 }
 
 docker exec -i "$CONTAINER_NAME" pg_restore --list < "$BACKUP_PATH"   | grep -F "TABLE DATA public licensing_decision_state" >/dev/null
+docker exec -i "$CONTAINER_NAME" pg_restore --list < "$BACKUP_PATH"   | grep -F "TABLE DATA public licensing_issue_receipt" >/dev/null
 
 echo "=== S7.5 DESTROY AND RECREATE DATABASE ==="
 docker exec   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   psql -v ON_ERROR_STOP=1 -U "$ADMIN_USER" -d postgres   -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DATABASE' AND pid <> pg_backend_pid()"   -c "DROP DATABASE $DATABASE"   -c "CREATE DATABASE $DATABASE TEMPLATE template0"   >/dev/null
@@ -83,7 +84,7 @@ docker exec   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   psql -v ON_E
 echo "=== S7.5 RESTORE DATABASE ==="
 docker exec -i   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   pg_restore     --exit-on-error     --no-owner     --no-acl     -U "$ADMIN_USER"     -d "$DATABASE"   < "$BACKUP_PATH"
 
-docker exec   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   psql -v ON_ERROR_STOP=1 -U "$ADMIN_USER" -d "$DATABASE"   -c "GRANT USAGE ON SCHEMA public TO $RUNTIME_USER"   -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO $RUNTIME_USER"   >/dev/null
+docker exec   -e PGPASSWORD="$ADMIN_PASSWORD"   "$CONTAINER_NAME"   psql -v ON_ERROR_STOP=1 -U "$ADMIN_USER" -d "$DATABASE"   -c "GRANT USAGE ON SCHEMA public TO $RUNTIME_USER"   -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO $RUNTIME_USER"     -c "GRANT SELECT, INSERT ON TABLE licensing_issue_receipt TO $RUNTIME_USER"   >/dev/null
 
 echo "=== S7.5 VERIFY RESTORE AND ADVANCE ==="
 "${GRADLE[@]}" :issuer-postgres:test   --tests "pro.liliya.licensing.postgres.PostgreSqlBackupRestoreAcceptanceTest.restored_authoritative_state_is_exact_and_runtime_can_advance_monotonically"   --tests "pro.liliya.licensing.postgres.PostgreSqlBackupRestoreAcceptanceTest.runtime_role_has_no_schema_creation_privilege"   --rerun-tasks   --console=plain

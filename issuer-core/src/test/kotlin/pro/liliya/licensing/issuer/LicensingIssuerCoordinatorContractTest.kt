@@ -17,6 +17,42 @@ import pro.liliya.licensing.signing.SigningResult
 
 class LicensingIssuerCoordinatorContractTest {
     @Test
+    fun retry_returns_original_receipt_without_source_or_signer() {
+        val signed = SignedLicenseEnvelope(
+            pro.liliya.licensing.signing.SigningEnvelopeSchemaVersion(1),
+            pro.liliya.licensing.signing.SigningAlgorithm("TEST-ED25519"),
+            pro.liliya.licensing.signing.SigningKeyReference("test-key"),
+            byteArrayOf(1), byteArrayOf(2)
+        )
+        val transactions = object : IdempotentDecisionTransactionPort {
+            override fun lookup(requestId: String): IssueReceiptLookup =
+                IssueReceiptLookup.Found(
+                    DecisionScope("lookup-subject", "lookup-product"),
+                    DecisionState(0, 1), signed
+                )
+            override fun transactOnce(
+                scope: DecisionScope,
+                requestScope: DecisionScope,
+                requestId: String,
+                block: (DecisionState?) -> DecisionCandidate?
+            ): DecisionTransactionResult = error("receipt must bypass new transaction")
+            override fun transact(
+                scope: DecisionScope,
+                block: (DecisionState?) -> DecisionCandidate?
+            ): DecisionTransactionResult = error("receipt must bypass new transaction")
+        }
+        val coordinator = coordinator(
+            source = EntitlementSourcePort { error("receipt must bypass source") },
+            signer = LicenseEnvelopeSigner { _, _ -> error("receipt must bypass signer") },
+            transactions = transactions
+        )
+        val issued = assertIs<LicensingIssuerResult.Issued>(
+            coordinator.process(request().copy(requestId = "activation:grant-id:activation-request"))
+        )
+        assertEquals(DecisionState(0, 1), issued.state)
+        assertEquals(signed, issued.envelope)
+    }
+    @Test
     fun ineligible_source_never_reaches_signer() {
         var signerCalls = 0
         val coordinator = coordinator(

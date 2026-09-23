@@ -31,6 +31,27 @@ class LicensingIssuerCoordinator(
             return LicensingIssuerResult.Rejected(validated.reason)
         }
 
+        // Activation supplies a grant-bound internal ID. Other issuer requests keep their
+        // existing semantics until their own full-request idempotency contract is defined.
+        val receiptPort = if (
+            request.operation == pro.liliya.licensing.protocol.LicenseOperation.ISSUE &&
+            request.requestId?.startsWith("activation:") == true
+        ) transactions as? IdempotentDecisionTransactionPort else null
+        val receiptId = request.requestId
+        if (receiptId != null && receiptPort != null) {
+            when (val receipt = receiptPort.lookup(receiptId)) {
+                is IssueReceiptLookup.Found -> {
+                    if (receipt.requestScope != DecisionScope(request.subjectReference, request.productId)) {
+                        return LicensingIssuerResult.Rejected(LicenseServiceFailure.IDEMPOTENCY_CONFLICT)
+                    }
+                    return LicensingIssuerResult.Issued(receipt.state, receipt.envelope)
+                }
+                IssueReceiptLookup.Unavailable ->
+                    return LicensingIssuerResult.Rejected(LicenseServiceFailure.INTERNAL_FAILURE)
+                IssueReceiptLookup.Missing -> Unit
+            }
+        }
+
         val sourceRecord = when (val resolved = source.resolve(request)) {
             is EntitlementSourceResult.Eligible -> resolved.record
             is EntitlementSourceResult.Ineligible -> return LicensingIssuerResult.Rejected(resolved.reason)
@@ -42,13 +63,12 @@ class LicensingIssuerCoordinator(
             productId = sourceRecord.productId
         )
 
-        return when (
-            val transaction = transactions.transact(scope) { current ->
+        val decision: (DecisionState?) -> DecisionCandidate? = decision@{ current ->
                 val currentReplay = current?.replaySequence ?: -1L
                 val nextReplay = currentReplay + 1L
-                if (nextReplay < 0L) return@transact null
+                if (nextReplay < 0L) return@decision null
                 if (current != null && sourceRecord.revocationEpoch < current.revocationEpoch) {
-                    return@transact null
+                    return@decision null
                 }
 
                 val composed = CanonicalEntitlementComposer.compose(
@@ -69,11 +89,11 @@ class LicensingIssuerCoordinator(
                 )
                 val entitlement = when (composed) {
                     is CanonicalEntitlementCompositionResult.Composed -> composed.entitlement
-                    is CanonicalEntitlementCompositionResult.Rejected -> return@transact null
+                    is CanonicalEntitlementCompositionResult.Rejected -> return@decision null
                 }
                 val signed = when (val result = signing.sign(entitlement)) {
                     is LicenseSigningCompositionResult.Signed -> result.envelope
-                    is LicenseSigningCompositionResult.Rejected -> return@transact null
+                    is LicenseSigningCompositionResult.Rejected -> return@decision null
                 }
 
                 DecisionCandidate(
@@ -83,14 +103,20 @@ class LicensingIssuerCoordinator(
                     ),
                     envelope = signed
                 )
-            }
-        ) {
+        }
+        val transaction = if (receiptId != null && receiptPort != null) {
+            receiptPort.transactOnce(scope, DecisionScope(request.subjectReference, request.productId), receiptId, decision)
+        } else {
+            transactions.transact(scope, decision)
+        }
+        return when (transaction) {
             is DecisionTransactionResult.Committed ->
                 LicensingIssuerResult.Issued(transaction.state, transaction.envelope)
             is DecisionTransactionResult.Rejected ->
                 LicensingIssuerResult.Rejected(
                     when (transaction.reason) {
                         DecisionTransactionFailure.CONFLICT -> LicenseServiceFailure.REPLAY_CONFLICT
+                        DecisionTransactionFailure.IDEMPOTENCY_CONFLICT -> LicenseServiceFailure.IDEMPOTENCY_CONFLICT
                         DecisionTransactionFailure.REJECTED -> LicenseServiceFailure.REFRESH_REJECTED
                         DecisionTransactionFailure.INTERNAL_FAILURE -> LicenseServiceFailure.INTERNAL_FAILURE
                     }

@@ -154,7 +154,8 @@ class PostgreSqlActivationGrantStore(
                         }
                     }
 
-                    if (!now.isBefore(current.expiresAt)) {
+                    // An already accepted claim may finish after code expiry. A new claim may not.
+                    if (current.claimRequestId == null && !now.isBefore(current.expiresAt)) {
                         return rollback(connection, ActivationPreparationResult.Expired)
                     }
 
