@@ -41,7 +41,9 @@ class ActivationLicenseHttpEndpoint(
         val prepared = when (
             val result = redemption.prepare(
                 rawCode = activation.code,
-                requestId = activation.requestId
+                requestId = activation.requestId,
+                installId = activation.installId,
+                installSecret = activation.installSecret
             )
         ) {
             is ActivationPreparationResult.Accepted -> result.grant
@@ -105,12 +107,28 @@ class ActivationLicenseHttpEndpoint(
             if (root.path("kind").asText("") != "activate") return null
             val code = root.path("activationCode")
             val requestId = root.path("activationRequestId")
-            if (!code.isTextual || !requestId.isTextual) return null
+            val installId = root.path("installId")
+            val installSecret = root.path("installSecret")
+            if (
+                !code.isTextual ||
+                !requestId.isTextual ||
+                !installId.isTextual ||
+                !installSecret.isTextual
+            ) return null
             val codeValue = code.asText()
             val requestIdValue = requestId.asText()
+            val installIdValue = installId.asText()
+            val installSecretValue = installSecret.asText()
             if (codeValue.isBlank() || codeValue.length > 128) return null
             if (requestIdValue.isBlank() || requestIdValue.length > 128) return null
-            ActivationRequest(codeValue, requestIdValue)
+            if (installIdValue.length !in 8..128) return null
+            if (installSecretValue.length !in 32..256) return null
+            ActivationRequest(
+                code = codeValue,
+                requestId = requestIdValue,
+                installId = installIdValue,
+                installSecret = installSecretValue
+            )
         } catch (_: Exception) {
             null
         }
@@ -118,8 +136,14 @@ class ActivationLicenseHttpEndpoint(
 
     private data class ActivationRequest(
         val code: String,
-        val requestId: String
-    )
+        val requestId: String,
+        val installId: String,
+        val installSecret: String
+    ) {
+        override fun toString(): String =
+            "ActivationRequest(code=<redacted>,requestId=<redacted>," +
+                "installId=<redacted>,installSecret=<redacted>)"
+    }
 
     private fun statusFor(reason: LicenseServiceFailure): Int =
         when (reason) {
