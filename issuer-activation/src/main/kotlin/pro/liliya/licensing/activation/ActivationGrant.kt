@@ -25,7 +25,7 @@ sealed interface ActivationProvisioningResult {
     data object Failed : ActivationProvisioningResult
 }
 
-class ActivationPreparedGrant internal constructor(
+class ActivationPreparedGrant(
     val subject: String,
     val productId: String,
     internal val codeHash: ActivationCodeHash,
