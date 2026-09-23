@@ -193,6 +193,30 @@ jobs:
                  (.payloadBase64 | length > 0) and
                  (.signatureBase64 | length > 0)'             activation-refresh.json >/dev/null
 
+          WRONG_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$WRONG_SECRET"
+          WRONG_REFRESH_BODY='{"wireVersion":1,"kind":"request","protocolVersion":1,"operation":"REFRESH","productId":"liliya-pro","subjectReference":"activation-phone-1","requestId":"activation-refresh-wrong-secret"}'
+          WRONG_SECRET_STATUS="$(
+            curl -sS --cacert .activation-tls/server.crt \
+              -o activation-refresh-wrong-secret.json -w '%{http_code}' \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $WRONG_SECRET" \
+              -d "$WRONG_REFRESH_BODY" \
+              https://127.0.0.1:18692/v1/license
+          )"
+          test "$WRONG_SECRET_STATUS" = "401"
+
+          WRONG_SCOPE_BODY='{"wireVersion":1,"kind":"request","protocolVersion":1,"operation":"REFRESH","productId":"liliya-pro","subjectReference":"activation-phone-other","requestId":"activation-refresh-wrong-scope"}'
+          WRONG_SCOPE_STATUS="$(
+            curl -sS --cacert .activation-tls/server.crt \
+              -o activation-refresh-wrong-scope.json -w '%{http_code}' \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $INSTALL_SECRET" \
+              -d "$WRONG_SCOPE_BODY" \
+              https://127.0.0.1:18692/v1/license
+          )"
+          test "$WRONG_SCOPE_STATUS" = "401"
+
           ISSUE_BODY='{"wireVersion":1,"kind":"request","protocolVersion":1,"operation":"ISSUE","productId":"liliya-pro","subjectReference":"activation-phone-1","requestId":"activation-issue-with-install-secret"}'
           ISSUE_STATUS="$(
             curl -sS --cacert .activation-tls/server.crt               -o activation-install-issue.json -w '%{http_code}'               -H "Content-Type: application/json"               -H "Authorization: Bearer $INSTALL_SECRET"               -d "$ISSUE_BODY"               https://127.0.0.1:18692/v1/license
@@ -213,7 +237,7 @@ jobs:
           PGPASSWORD=activation-admin-fixture psql             -h 127.0.0.1 -p 18690 -U postgres -d liliya_activation             -Atqc "SELECT count(*) FROM licensing_activation_grant WHERE redeemed_at IS NOT NULL" |
             grep -Fx '1'
 
-          echo 'LILIYA_ACTIVATION_E2E={"oneTimeCode":true,"plaintextNotPersisted":true,"serverResolvedIdentity":true,"signedLicenseIssued":true,"lostResponseRetryReplayed":true,"installCredentialRefresh":true,"installCredentialIssueRejected":true,"installSecretStoredHashed":true}'
+          echo 'LILIYA_ACTIVATION_E2E={"oneTimeCode":true,"plaintextNotPersisted":true,"serverResolvedIdentity":true,"signedLicenseIssued":true,"lostResponseRetryReplayed":true,"installCredentialRefresh":true,"installCredentialIssueRejected":true,"wrongInstallSecretRejected":true,"wrongInstallScopeRejected":true,"installSecretStoredHashed":true}'
           echo "=== ACTIVATION E2E ACCEPTANCE PASS ==="
 
       - name: Cleanup
