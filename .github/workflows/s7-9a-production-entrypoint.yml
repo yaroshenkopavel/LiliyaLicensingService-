@@ -14,6 +14,8 @@ on:
       - "issuer-openbao-transit/**"
       - "issuer-request-auth/**"
       - "issuer-observability/**"
+      - "issuer-activation/**"
+      - "issuer-postgres-entitlement-provider/**"
       - ".github/workflows/s7-9a-production-entrypoint.yml"
 
 permissions:
@@ -141,7 +143,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79a-openbao-token)"
           AUTH_SECRET="$(cat .s79a-auth)"
           TLS_PASS="$(cat .s79a-tls-pass)"
@@ -153,8 +155,8 @@ jobs:
           set -e
 
           test "$STATUS" -ne 0
-          grep -F '"code":"RUNTIME_NOT_READY"' s79a-not-ready.log
-          grep -F '"reason":"POSTGRESQL_UNAVAILABLE"' s79a-not-ready.log
+          grep -F '"code":"DEPENDENCY_UNAVAILABLE"' s79a-not-ready.log
+          grep -F '"reason":"ENTITLEMENT_SOURCE_UNAVAILABLE"' s79a-not-ready.log
           ! grep -F "$RUNTIME_PASS" s79a-not-ready.log
           ! grep -F "$AUTH_SECRET" s79a-not-ready.log
           ! grep -F "$APP_TOKEN" s79a-not-ready.log
@@ -169,13 +171,13 @@ jobs:
 
           grep -F 'LICENSING_S7_9A_SCHEMA_EVIDENCE=' s79a-schema.log
 
-          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79a_runtime" >/dev/null
+          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79a_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_s79a_runtime"             -c "GRANT SELECT, UPDATE ON TABLE licensing_activation_grant TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT ON TABLE licensing_install_credential TO liliya_s79a_runtime" >/dev/null
 
       - name: Start real production entrypoint and prove READY
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79a-openbao-token)"
           AUTH_SECRET="$(cat .s79a-auth)"
           TLS_PASS="$(cat .s79a-tls-pass)"

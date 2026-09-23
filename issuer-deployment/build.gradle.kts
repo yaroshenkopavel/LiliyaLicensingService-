@@ -36,6 +36,7 @@ dependencies {
     implementation(project(":issuer-request-auth"))
     implementation(project(":issuer-https-listener"))
     implementation(project(":issuer-entitlement-spi"))
+    implementation(project(":issuer-activation"))
 
     implementation("org.postgresql:postgresql:42.7.7")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
@@ -47,6 +48,7 @@ dependencies {
         isTransitive = false
     }
 
+    testImplementation(project(":issuer-postgres-entitlement-provider"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
 }

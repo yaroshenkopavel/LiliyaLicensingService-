@@ -1,6 +1,7 @@
 package pro.liliya.licensing.deployment
 
 import org.postgresql.ds.PGSimpleDataSource
+import pro.liliya.licensing.activation.PostgreSqlActivationGrantStore
 import pro.liliya.licensing.postgres.PostgreSqlDecisionTransactionPort
 
 fun main() {
@@ -15,7 +16,9 @@ fun main() {
     }
 
     PostgreSqlDecisionTransactionPort(dataSource).initializeSchema()
-    println("LICENSING_S7_9A_SCHEMA_EVIDENCE={\"schemaInitializedBySeparateAdminHelper\":true}")
+    PostgreSqlEntitlementSchemaAdmin.initialize(dataSource)
+    PostgreSqlActivationGrantStore(dataSource).initializeSchema()
+    println("LICENSING_S7_9A_SCHEMA_EVIDENCE={\"decisionSchema\":true,\"entitlementSchema\":true,\"activationSchema\":true,\"initializedBySeparateAdminHelper\":true}")
 }
 
 private fun requiredEnv(name: String): String =

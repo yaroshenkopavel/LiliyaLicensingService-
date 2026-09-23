@@ -3,10 +3,17 @@ package pro.liliya.licensing.deployment
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import org.postgresql.ds.PGSimpleDataSource
+import pro.liliya.licensing.activation.ActivationRedemptionService
+import pro.liliya.licensing.activation.PostgreSqlActivationGrantStore
+import pro.liliya.licensing.activation.InstallCredentialVerificationResult
+import pro.liliya.licensing.activation.InstallCredentialVerifier
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
+import pro.liliya.licensing.auth.RequestAuthenticationScope
+import pro.liliya.licensing.auth.ScopedRequestAuthenticationPort
+import pro.liliya.licensing.http.ActivationLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpEndpoint
@@ -96,6 +103,64 @@ class SharedSecretRequestAuthentication(
 
     override fun toString(): String =
         "SharedSecretRequestAuthentication(secret=<redacted>,closed=" + closed + ")"
+}
+
+class ProductionScopedRequestAuthentication(
+    private val global: SharedSecretRequestAuthentication,
+    private val installs: InstallCredentialVerifier
+) : ScopedRequestAuthenticationPort {
+    override fun authenticate(
+        credential: RequestAuthenticationCredential?,
+        scope: RequestAuthenticationScope
+    ): RequestAuthenticationResult {
+        if (credential == null) {
+            return RequestAuthenticationResult.Rejected(
+                RequestAuthenticationFailure.MISSING
+            )
+        }
+
+        when (val globalResult = global.authenticate(credential)) {
+            RequestAuthenticationResult.Authenticated -> return globalResult
+            is RequestAuthenticationResult.Rejected -> {
+                if (globalResult.reason == RequestAuthenticationFailure.UNAVAILABLE) {
+                    return globalResult
+                }
+            }
+        }
+
+        if (scope.operation != "REFRESH") {
+            return RequestAuthenticationResult.Rejected(
+                RequestAuthenticationFailure.INVALID
+            )
+        }
+
+        val bytes = credential.copyBytes()
+        return try {
+            when (
+                installs.verify(
+                    subject = scope.subject,
+                    productId = scope.productId,
+                    secret = bytes
+                )
+            ) {
+                InstallCredentialVerificationResult.VALID ->
+                    RequestAuthenticationResult.Authenticated
+                InstallCredentialVerificationResult.INVALID ->
+                    RequestAuthenticationResult.Rejected(
+                        RequestAuthenticationFailure.INVALID
+                    )
+                InstallCredentialVerificationResult.UNAVAILABLE ->
+                    RequestAuthenticationResult.Rejected(
+                        RequestAuthenticationFailure.UNAVAILABLE
+                    )
+            }
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
+    override fun toString(): String =
+        "ProductionScopedRequestAuthentication(global=<redacted>,installs=<redacted>)"
 }
 
 class PostgreSqlRuntimeReadinessDependency(
@@ -321,18 +386,26 @@ class LicensingProductionService private constructor(
                 )
             )
 
-            val endpoint = AuthenticatedLicenseHttpEndpoint(
-                delegate = LicenseHttpEndpoint(
-                    LicensingIssuerCoordinator(
-                        validator = LicenseRequestValidator(
-                            supportedVersion = LicenseProtocolVersion(1)
-                        ),
-                        source = entitlementSource,
-                        transactions = transactions,
-                        signing = LicenseSigningComposition(signer)
-                    )
+            val coordinator = LicensingIssuerCoordinator(
+                validator = LicenseRequestValidator(
+                    supportedVersion = LicenseProtocolVersion(1)
                 ),
-                authentication = authentication
+                source = entitlementSource,
+                transactions = transactions,
+                signing = LicenseSigningComposition(signer)
+            )
+            val activationStore = PostgreSqlActivationGrantStore(dataSource)
+            activationStore.verifySchema()
+            val endpoint = AuthenticatedLicenseHttpEndpoint(
+                delegate = LicenseHttpEndpoint(coordinator),
+                authentication = ProductionScopedRequestAuthentication(
+                    global = authentication,
+                    installs = activationStore
+                )
+            )
+            val activationEndpoint = ActivationLicenseHttpEndpoint(
+                redemption = ActivationRedemptionService(activationStore),
+                coordinator = coordinator
             )
             val serviceStateEndpoint = AuthenticatedServiceStateHttpEndpoint(
                 service = serviceStateService,
@@ -340,7 +413,8 @@ class LicensingProductionService private constructor(
             )
             val router = LicensingHttpRouter(
                 entitlement = endpoint,
-                serviceState = serviceStateEndpoint
+                serviceState = serviceStateEndpoint,
+                activation = activationEndpoint
             )
 
             val tlsPassword = run {
