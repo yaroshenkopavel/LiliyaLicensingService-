@@ -128,6 +128,12 @@ class ProductionScopedRequestAuthentication(
             }
         }
 
+        if (scope.operation != "REFRESH") {
+            return RequestAuthenticationResult.Rejected(
+                RequestAuthenticationFailure.INVALID
+            )
+        }
+
         val bytes = credential.copyBytes()
         return try {
             when (
