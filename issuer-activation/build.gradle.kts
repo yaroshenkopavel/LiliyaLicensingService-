@@ -7,6 +7,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":issuer-request-auth"))
     implementation("org.postgresql:postgresql:42.7.7")
 
     testImplementation(kotlin("test"))
