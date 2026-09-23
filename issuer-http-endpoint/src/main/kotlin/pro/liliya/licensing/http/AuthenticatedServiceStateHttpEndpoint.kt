@@ -37,6 +37,17 @@ class AuthenticatedServiceStateHttpEndpoint(
 
         when (val result = authentication.authenticate(request.authentication)) {
             RequestAuthenticationResult.Authenticated -> Unit
+            is RequestAuthenticationResult.AuthenticatedScoped -> {
+                if (
+                    result.scope.subject != decoded.scope.subject ||
+                    result.scope.productId != decoded.scope.productId
+                ) {
+                    return rejected(
+                        401,
+                        ServiceStateWireFailure.AUTHENTICATION_REQUIRED
+                    )
+                }
+            }
             is RequestAuthenticationResult.Rejected -> {
                 return when (result.reason) {
                     RequestAuthenticationFailure.MISSING,
