@@ -10,6 +10,8 @@ import pro.liliya.licensing.activation.ActivationGrantStore
 import pro.liliya.licensing.activation.ActivationPreparationResult
 import pro.liliya.licensing.activation.ActivationPreparedGrant
 import pro.liliya.licensing.activation.ActivationRedemptionService
+import pro.liliya.licensing.activation.InstallCredentialBinding
+import pro.liliya.licensing.activation.InstallCredentialHasher
 import pro.liliya.licensing.issuer.LicensingIssuerResult
 import pro.liliya.licensing.protocol.LicenseOperation
 import pro.liliya.licensing.protocol.LicenseServiceFailure
@@ -29,7 +31,13 @@ class ActivationLicenseHttpEndpointContractTest {
                         subject = "phone-subject",
                         productId = "liliya-pro",
                         codeHash = ActivationCodeHash.of(ByteArray(32) { 1 }),
-                        requestId = "activation-request-1"
+                        requestId = "activation-request-1",
+                        installCredential = InstallCredentialBinding(
+                            installId = "install-phone-01",
+                            secretHash = InstallCredentialHasher.sha256(
+                                "0123456789abcdef0123456789abcdef"
+                            )
+                        )
                     ))
                 )
             ),
@@ -106,6 +114,7 @@ class ActivationLicenseHttpEndpointContractTest {
             override fun prepare(
                 codeHash: ActivationCodeHash,
                 requestId: String,
+                installCredential: InstallCredentialBinding,
                 now: Instant
             ): ActivationPreparationResult {
                 storeCalls += 1
@@ -144,12 +153,13 @@ class ActivationLicenseHttpEndpointContractTest {
             override fun prepare(
                 codeHash: ActivationCodeHash,
                 requestId: String,
+                installCredential: InstallCredentialBinding,
                 now: Instant
             ): ActivationPreparationResult = result
         }
 
     private fun activationBody(code: String): ByteArray =
-        """{"wireVersion":1,"kind":"activate","activationCode":"$code","activationRequestId":"activation-request-1"}""".encodeToByteArray()
+        """{"wireVersion":1,"kind":"activate","activationCode":"$code","activationRequestId":"activation-request-1","installId":"install-phone-01","installSecret":"0123456789abcdef0123456789abcdef"}""".encodeToByteArray()
 
     private fun validCode(): String =
         "LIL-0011-2233-4455-6677-8899-AABB-CCDD-EEFF"
