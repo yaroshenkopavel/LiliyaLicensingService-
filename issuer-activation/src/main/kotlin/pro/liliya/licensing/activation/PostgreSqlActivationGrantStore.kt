@@ -3,6 +3,7 @@ package pro.liliya.licensing.activation
 import java.sql.Connection
 import java.sql.SQLException
 import java.time.Instant
+import java.time.ZoneOffset
 import javax.sql.DataSource
 
 /**
@@ -64,8 +65,8 @@ class PostgreSqlActivationGrantStore(
                     statement.setBytes(1, grant.codeHash.copyBytes())
                     statement.setString(2, grant.subject)
                     statement.setString(3, grant.productId)
-                    statement.setObject(4, grant.createdAt)
-                    statement.setObject(5, grant.expiresAt)
+                    statement.setObject(4, grant.createdAt.atOffset(ZoneOffset.UTC))
+                    statement.setObject(5, grant.expiresAt.atOffset(ZoneOffset.UTC))
                     statement.executeUpdate() == 1
                 }
             }
@@ -130,7 +131,7 @@ class PostgreSqlActivationGrantStore(
                           AND redeemed_at IS NULL
                         """.trimIndent()
                     ).use { statement ->
-                        statement.setObject(1, now)
+                        statement.setObject(1, now.atOffset(ZoneOffset.UTC))
                         statement.setBytes(2, codeHash.copyBytes())
                         statement.executeUpdate()
                     }
