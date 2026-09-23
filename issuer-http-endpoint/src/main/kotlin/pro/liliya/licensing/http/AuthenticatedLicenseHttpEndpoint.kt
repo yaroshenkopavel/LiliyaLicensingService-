@@ -3,6 +3,8 @@ package pro.liliya.licensing.http
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
+import pro.liliya.licensing.auth.RequestAuthenticationScope
+import pro.liliya.licensing.auth.ScopedRequestAuthenticationPort
 import pro.liliya.licensing.protocol.LicenseServiceFailure
 import pro.liliya.licensing.transport.LicenseWireDecodeResult
 import pro.liliya.licensing.transport.LicenseWireJsonCodec
@@ -17,8 +19,17 @@ import pro.liliya.licensing.transport.LicenseWireResponse
  */
 class AuthenticatedLicenseHttpEndpoint(
     private val delegate: LicenseHttpEndpoint,
-    private val authentication: RequestAuthenticationPort
+    private val authentication: ScopedRequestAuthenticationPort
 ) {
+    constructor(
+        delegate: LicenseHttpEndpoint,
+        authentication: RequestAuthenticationPort
+    ) : this(
+        delegate = delegate,
+        authentication = ScopedRequestAuthenticationPort { credential, _ ->
+            authentication.authenticate(credential)
+        }
+    )
     fun handle(request: LicenseHttpRequest): LicenseHttpResponse {
         if (request.path != LicenseHttpEndpoint.PATH) {
             return delegate.handle(request)
@@ -28,12 +39,20 @@ class AuthenticatedLicenseHttpEndpoint(
             return delegate.handle(request)
         }
 
-        when (LicenseWireJsonCodec.decodeRequest(request.body)) {
-            is LicenseWireDecodeResult.Decoded -> Unit
+        val decoded = when (val result = LicenseWireJsonCodec.decodeRequest(request.body)) {
+            is LicenseWireDecodeResult.Decoded -> result.value
             is LicenseWireDecodeResult.Rejected -> return delegate.handle(request)
         }
 
-        return when (val result = authentication.authenticate(request.authentication)) {
+        return when (
+            val result = authentication.authenticate(
+                request.authentication,
+                RequestAuthenticationScope(
+                    subject = decoded.request.subjectReference,
+                    productId = decoded.request.productId
+                )
+            )
+        ) {
             RequestAuthenticationResult.Authenticated ->
                 delegate.handle(request)
 
