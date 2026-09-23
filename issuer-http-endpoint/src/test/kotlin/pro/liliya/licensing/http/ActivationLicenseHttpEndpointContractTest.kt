@@ -7,7 +7,8 @@ import kotlin.test.assertIs
 import pro.liliya.licensing.activation.ActivationCodeHash
 import pro.liliya.licensing.activation.ActivationGrant
 import pro.liliya.licensing.activation.ActivationGrantStore
-import pro.liliya.licensing.activation.ActivationRedemptionResult
+import pro.liliya.licensing.activation.ActivationPreparationResult
+import pro.liliya.licensing.activation.ActivationPreparedGrant
 import pro.liliya.licensing.activation.ActivationRedemptionService
 import pro.liliya.licensing.issuer.LicensingIssuerResult
 import pro.liliya.licensing.protocol.LicenseOperation
@@ -24,10 +25,12 @@ class ActivationLicenseHttpEndpointContractTest {
         val endpoint = ActivationLicenseHttpEndpoint(
             redemption = ActivationRedemptionService(
                 fixedStore(
-                    ActivationRedemptionResult.Accepted(
+                    ActivationPreparationResult.Accepted(ActivationPreparedGrant(
                         subject = "phone-subject",
-                        productId = "liliya-pro"
-                    )
+                        productId = "liliya-pro",
+                        codeHash = ActivationCodeHash.of(ByteArray(32) { 1 }),
+                        requestId = "activation-request-1"
+                    ))
                 )
             ),
             processor = LicensingIssuerProcessor { request ->
@@ -64,7 +67,7 @@ class ActivationLicenseHttpEndpointContractTest {
         var calls = 0
         val endpoint = ActivationLicenseHttpEndpoint(
             redemption = ActivationRedemptionService(
-                fixedStore(ActivationRedemptionResult.AlreadyRedeemed)
+                fixedStore(ActivationPreparationResult.AlreadyRedeemed)
             ),
             processor = LicensingIssuerProcessor {
                 calls += 1
@@ -95,12 +98,18 @@ class ActivationLicenseHttpEndpointContractTest {
         var issuerCalls = 0
         val store = object : ActivationGrantStore {
             override fun create(grant: ActivationGrant): Boolean = error("not used")
-            override fun redeem(
-                codeHash: ActivationCodeHash,
+            override fun complete(
+                prepared: ActivationPreparedGrant,
+                responseBody: ByteArray,
                 now: Instant
-            ): ActivationRedemptionResult {
+            ): Boolean = true
+            override fun prepare(
+                codeHash: ActivationCodeHash,
+                requestId: String,
+                now: Instant
+            ): ActivationPreparationResult {
                 storeCalls += 1
-                return ActivationRedemptionResult.Invalid
+                return ActivationPreparationResult.Invalid
             }
         }
         val endpoint = ActivationLicenseHttpEndpoint(
@@ -127,14 +136,20 @@ class ActivationLicenseHttpEndpointContractTest {
     private fun fixedStore(result: ActivationRedemptionResult): ActivationGrantStore =
         object : ActivationGrantStore {
             override fun create(grant: ActivationGrant): Boolean = error("not used")
-            override fun redeem(
-                codeHash: ActivationCodeHash,
+            override fun complete(
+                prepared: ActivationPreparedGrant,
+                responseBody: ByteArray,
                 now: Instant
-            ): ActivationRedemptionResult = result
+            ): Boolean = true
+            override fun prepare(
+                codeHash: ActivationCodeHash,
+                requestId: String,
+                now: Instant
+            ): ActivationPreparationResult = result
         }
 
     private fun activationBody(code: String): ByteArray =
-        """{"wireVersion":1,"kind":"activate","activationCode":"$code"}""".encodeToByteArray()
+        """{"wireVersion":1,"kind":"activate","activationCode":"$code","activationRequestId":"activation-request-1"}""".encodeToByteArray()
 
     private fun validCode(): String =
         "LIL-0011-2233-4455-6677-8899-AABB-CCDD-EEFF"
