@@ -37,8 +37,8 @@ dependencies {
     implementation(project(":issuer-https-listener"))
     implementation(project(":issuer-entitlement-spi"))
 
-    implementation("org.postgresql:postgresql:42.7.7")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
+    implementation("org.postgresql:postgresql:42.7.13")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.21.7")
 
     add(
         productionEntitlementProvider.name,

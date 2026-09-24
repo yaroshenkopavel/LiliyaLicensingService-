@@ -15,8 +15,8 @@ dependencies {
     testImplementation(project(":issuer-testkit"))
     testImplementation(project(":issuer-openbao-transit"))
     testImplementation(project(":issuer-postgres"))
-    testImplementation("org.postgresql:postgresql:42.7.7")
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
+    testImplementation("org.postgresql:postgresql:42.7.13")
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.21.7")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
 }
