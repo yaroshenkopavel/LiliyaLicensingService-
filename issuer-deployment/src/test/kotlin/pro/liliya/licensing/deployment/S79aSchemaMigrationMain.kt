@@ -2,6 +2,7 @@ package pro.liliya.licensing.deployment
 
 import org.postgresql.ds.PGSimpleDataSource
 import pro.liliya.licensing.postgres.PostgreSqlDecisionTransactionPort
+import pro.liliya.licensing.postgres.PostgreSqlEntitlementSchema
 
 fun main() {
     val url = requiredEnv("S7_9A_POSTGRES_URL")
@@ -15,7 +16,13 @@ fun main() {
     }
 
     PostgreSqlDecisionTransactionPort(dataSource).initializeSchema()
-    println("LICENSING_S7_9A_SCHEMA_EVIDENCE={\"schemaInitializedBySeparateAdminHelper\":true}")
+    PostgreSqlEntitlementSchema.initialize(dataSource)
+    println(
+        "LICENSING_S7_9A_SCHEMA_EVIDENCE=" +
+            "{\"schemaInitializedBySeparateAdminHelper\":true," +
+            "\"entitlementSchemaInitialized\":true," +
+            "\"entitlementRowsCreated\":false}"
+    )
 }
 
 private fun requiredEnv(name: String): String =
