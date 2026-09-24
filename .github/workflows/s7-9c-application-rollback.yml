@@ -26,32 +26,32 @@ jobs:
 
     steps:
       - name: Checkout N+1 candidate
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Checkout frozen application version N
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: 80fbbc702d9318982d9453281634ba49372ad9d5
           path: version-n
 
       - name: Checkout frozen LiliyaCore client
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: yaroshenkopavel/LiliyaCore-
           ref: 335fb9dd2f11c4c77983b89f28ebe30d95cb23dd
           path: liliya-core
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2
         with:
           gradle-version: "9.6.1"
 
       - name: Set up Android SDK for frozen LiliyaCore
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
 
       - name: Install Android API 35
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
