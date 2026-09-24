@@ -26,16 +26,16 @@ jobs:
 
     steps:
       - name: Checkout N+1 candidate
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Checkout frozen application version N
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: 80fbbc702d9318982d9453281634ba49372ad9d5
           path: version-n
 
       - name: Checkout frozen LiliyaCore client
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: yaroshenkopavel/LiliyaCore-
           ref: 335fb9dd2f11c4c77983b89f28ebe30d95cb23dd
@@ -46,7 +46,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      - uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2
         with:
           gradle-version: "9.6.1"
 

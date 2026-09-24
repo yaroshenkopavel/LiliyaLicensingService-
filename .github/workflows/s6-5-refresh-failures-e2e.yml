@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout Licensing Service
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Checkout S6.5 LiliyaCore consumer
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: yaroshenkopavel/LiliyaCore-
           ref: ca3195f25db556e463b7ee553e4203eeb802f5af
@@ -38,7 +38,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      - uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2
         with:
           gradle-version: "9.6.1"
 
