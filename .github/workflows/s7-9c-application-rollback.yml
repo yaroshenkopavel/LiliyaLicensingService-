@@ -270,7 +270,7 @@ jobs:
 
           S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18610/liliya_s79c           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD="$PG_ADMIN"             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt
 
-          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c             -c "GRANT USAGE ON SCHEMA public TO liliya_s79c_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79c_runtime" >/dev/null
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c             -c "GRANT USAGE ON SCHEMA public TO liliya_s79c_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79c_runtime"             -c "GRANT SELECT ON TABLE licensing_entitlement TO liliya_s79c_runtime" >/dev/null
 
       - name: Start application version N
         shell: bash
