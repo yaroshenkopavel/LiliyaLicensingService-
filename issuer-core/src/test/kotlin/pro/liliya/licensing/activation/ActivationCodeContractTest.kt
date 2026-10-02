@@ -92,6 +92,36 @@ class ActivationCodeContractTest {
             )
         )
     }
+    @Test
+    fun generator_creates_verifiable_owner_code_without_exposing_private_key() {
+        val generator = ActivationCodeGenerator(
+            keyId = "activation-key-v1",
+            signer = ActivationCodeSigner { payload ->
+                Signature.getInstance("SHA256withECDSA").run {
+                    initSign(keyPair.private)
+                    update(payload)
+                    sign()
+                }
+            }
+        )
+
+        val code = generator.generate(
+            productId = "liliya-pro",
+            features = setOf("core"),
+            expiresAt = Instant.parse("2027-10-02T00:00:00Z")
+        )
+
+        val verified = assertIs<ActivationCodeVerificationResult.Verified>(
+            ActivationCodeVerifier.verify(
+                code,
+                ActivationCodePublicKeyResolver { keyPair.public },
+                Instant.parse("2026-10-02T09:00:00Z")
+            )
+        )
+        assertEquals("liliya-pro", verified.claims.productId)
+        assertEquals(1, verified.claims.maxRedemptions)
+    }
+
     private fun signedCode(claims: ActivationCodeClaims): String {
         val signature = Signature.getInstance("SHA256withECDSA").run {
             initSign(keyPair.private)
