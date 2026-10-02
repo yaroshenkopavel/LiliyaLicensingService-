@@ -14,13 +14,16 @@ data class DeviceRebindCodeClaims(
     val codeId: String,
     val subject: String,
     val productId: String,
+    val deviceBindingEpoch: Long,
     val expiresAt: Instant?
 ) {
     init {
         require(version > 0)
         require(codeId.isNotBlank())
+        require(codeId.startsWith("device-rebind-v2:"))
         require(subject.isNotBlank())
         require(productId.isNotBlank())
+        require(deviceBindingEpoch >= 0L)
     }
 }
 
@@ -43,8 +46,8 @@ sealed interface DeviceRebindCodeVerificationResult {
 }
 
 object DeviceRebindCodeCodec {
-    private const val PREFIX = "LDR1"
-    private const val MAGIC = 0x4c445231
+    private const val PREFIX = "LDR2"
+    private const val MAGIC = 0x4c445232
     private val url = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
@@ -56,6 +59,7 @@ object DeviceRebindCodeCodec {
                 out.writeUTF(claims.codeId)
                 out.writeUTF(claims.subject)
                 out.writeUTF(claims.productId)
+                out.writeLong(claims.deviceBindingEpoch)
                 out.writeBoolean(claims.expiresAt != null)
                 claims.expiresAt?.let { out.writeLong(it.toEpochMilli()) }
             }
@@ -83,6 +87,7 @@ object DeviceRebindCodeCodec {
                 codeId = input.readUTF(),
                 subject = input.readUTF(),
                 productId = input.readUTF(),
+                deviceBindingEpoch = input.readLong(),
                 expiresAt = if (input.readBoolean()) {
                     Instant.ofEpochMilli(input.readLong())
                 } else null
@@ -104,6 +109,9 @@ object DeviceRebindCodeVerifier {
     ): DeviceRebindCodeVerificationResult {
         val envelope = DeviceRebindCodeCodec.parse(encoded)
             ?: return DeviceRebindCodeVerificationResult.Invalid
+        if (envelope.claims.version != 2) {
+            return DeviceRebindCodeVerificationResult.Invalid
+        }
         val key: PublicKey = keys.resolve(envelope.keyId)
             ?: return DeviceRebindCodeVerificationResult.Invalid
         val valid = runCatching {
@@ -133,6 +141,7 @@ class DeviceRebindCodeGenerator(
     fun generate(
         subject: String,
         productId: String,
+        deviceBindingEpoch: Long,
         expiresAt: Instant
     ): String {
         val bytes = ByteArray(16)
@@ -140,10 +149,11 @@ class DeviceRebindCodeGenerator(
         val token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
         bytes.fill(0)
         val claims = DeviceRebindCodeClaims(
-            version = 1,
-            codeId = "device-rebind-v1:$token",
+            version = 2,
+            codeId = "device-rebind-v2:$token",
             subject = subject,
             productId = productId,
+            deviceBindingEpoch = deviceBindingEpoch,
             expiresAt = expiresAt
         )
         val signature = signer.sign(DeviceRebindCodeCodec.signingPayload(claims))

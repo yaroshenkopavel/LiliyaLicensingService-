@@ -25,6 +25,7 @@ data class DeviceRebindRecord(
     val attemptId: String,
     val subject: String,
     val productId: String,
+    val deviceBindingEpoch: Long,
     val installationId: String,
     val deviceKeyFingerprint: String,
     val reboundAt: Instant
@@ -35,6 +36,7 @@ sealed interface DeviceRebindStoreResult {
     data class Replay(val record: DeviceRebindRecord) : DeviceRebindStoreResult
     data object Exhausted : DeviceRebindStoreResult
     data object ActiveDeviceExists : DeviceRebindStoreResult
+    data object StaleBindingEpoch : DeviceRebindStoreResult
     data object EntitlementUnavailable : DeviceRebindStoreResult
     data object Failed : DeviceRebindStoreResult
 }
@@ -64,6 +66,7 @@ sealed interface DeviceRebindResult {
     data object ExpiredCode : DeviceRebindResult
     data object CodeExhausted : DeviceRebindResult
     data object DeviceLimitReached : DeviceRebindResult
+    data object ReplacementStateChanged : DeviceRebindResult
     data object EntitlementUnavailable : DeviceRebindResult
     data object StoreUnavailable : DeviceRebindResult
 }
@@ -113,6 +116,8 @@ class DeviceRebindService(
                 DeviceRebindResult.CodeExhausted
             DeviceRebindStoreResult.ActiveDeviceExists ->
                 DeviceRebindResult.DeviceLimitReached
+            DeviceRebindStoreResult.StaleBindingEpoch ->
+                DeviceRebindResult.ReplacementStateChanged
             DeviceRebindStoreResult.EntitlementUnavailable ->
                 DeviceRebindResult.EntitlementUnavailable
             DeviceRebindStoreResult.Failed ->

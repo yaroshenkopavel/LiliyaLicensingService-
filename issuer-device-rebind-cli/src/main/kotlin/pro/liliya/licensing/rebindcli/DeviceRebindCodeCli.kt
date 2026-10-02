@@ -33,6 +33,7 @@ fun main(args: Array<String>) {
     ).generate(
         subject = parsed.subject,
         productId = parsed.productId,
+        deviceBindingEpoch = parsed.deviceBindingEpoch,
         expiresAt = parsed.expiresAt
     )
 
@@ -44,12 +45,14 @@ fun main(args: Array<String>) {
 internal data class CliArgs(
     val subject: String,
     val productId: String,
+    val deviceBindingEpoch: Long,
     val expiresAt: Instant
 ) {
     companion object {
         fun parse(args: Array<String>): CliArgs? {
             var subject: String? = null
             var product: String? = null
+            var deviceBindingEpoch: Long? = null
             var expiresAt: Instant? = null
             var index = 0
 
@@ -60,6 +63,13 @@ internal data class CliArgs(
 
                     "--product" ->
                         product = args.getOrNull(++index)?.takeIf { it.isNotBlank() }
+
+                    "--device-binding-epoch" -> {
+                        deviceBindingEpoch = args.getOrNull(++index)
+                            ?.toLongOrNull()
+                            ?.takeIf { it >= 0L }
+                            ?: return null
+                    }
 
                     "--expires-at" -> {
                         val raw = args.getOrNull(++index) ?: return null
@@ -72,8 +82,13 @@ internal data class CliArgs(
                 index += 1
             }
 
-            if (subject == null || product == null || expiresAt == null) return null
-            return CliArgs(subject, product, expiresAt)
+            if (
+                subject == null ||
+                product == null ||
+                deviceBindingEpoch == null ||
+                expiresAt == null
+            ) return null
+            return CliArgs(subject, product, deviceBindingEpoch, expiresAt)
         }
     }
 }
@@ -85,5 +100,5 @@ private fun requiredEnv(name: String): String =
 private fun failUsage(): Nothing =
     error(
         "usage: --subject <subject> --product <product-id> " +
-            "--expires-at <ISO-8601>"
+            "--device-binding-epoch <nonnegative> --expires-at <ISO-8601>"
     )

@@ -45,6 +45,8 @@ class PostgreSqlDeviceRebindStore(
                             DeviceRebindStoreResult.EntitlementUnavailable
                         EntitlementState.ACTIVE_BINDING_EXISTS ->
                             DeviceRebindStoreResult.ActiveDeviceExists
+                        EntitlementState.STALE_BINDING_EPOCH ->
+                            DeviceRebindStoreResult.StaleBindingEpoch
                         EntitlementState.READY -> {
                             insertBinding(
                                 connection,
@@ -68,7 +70,8 @@ class PostgreSqlDeviceRebindStore(
 
                 when (result) {
                     DeviceRebindStoreResult.EntitlementUnavailable,
-                    DeviceRebindStoreResult.ActiveDeviceExists -> connection.rollback()
+                    DeviceRebindStoreResult.ActiveDeviceExists,
+                    DeviceRebindStoreResult.StaleBindingEpoch -> connection.rollback()
                     else -> connection.commit()
                 }
                 result
@@ -96,10 +99,11 @@ class PostgreSqlDeviceRebindStore(
                 attempt_id,
                 subject,
                 product_id,
+                device_binding_epoch,
                 installation_id,
                 device_key_fingerprint,
                 redeemed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (code_id) DO NOTHING
             """.trimIndent()
         ).use { statement ->
@@ -107,9 +111,10 @@ class PostgreSqlDeviceRebindStore(
             statement.setString(2, attemptId)
             statement.setString(3, claims.subject)
             statement.setString(4, claims.productId)
-            statement.setString(5, installationId)
-            statement.setString(6, deviceKeyFingerprint)
-            statement.setTimestamp(7, java.sql.Timestamp.from(now))
+            statement.setLong(5, claims.deviceBindingEpoch)
+            statement.setString(6, installationId)
+            statement.setString(7, deviceKeyFingerprint)
+            statement.setTimestamp(8, java.sql.Timestamp.from(now))
             return statement.executeUpdate() == 1
         }
     }
@@ -120,7 +125,7 @@ class PostgreSqlDeviceRebindStore(
     ): EntitlementState {
         connection.prepareStatement(
             """
-            SELECT device_binding_required, revoked_at
+            SELECT device_binding_required, revoked_at, device_binding_epoch
             FROM licensing_entitlement
             WHERE subject = ?
               AND product_id = ?
@@ -136,6 +141,12 @@ class PostgreSqlDeviceRebindStore(
                 }
                 if (!result.getBoolean("device_binding_required")) {
                     return EntitlementState.UNAVAILABLE
+                }
+                if (
+                    result.getLong("device_binding_epoch") !=
+                    claims.deviceBindingEpoch
+                ) {
+                    return EntitlementState.STALE_BINDING_EPOCH
                 }
             }
         }
@@ -200,6 +211,7 @@ class PostgreSqlDeviceRebindStore(
                 attempt_id,
                 subject,
                 product_id,
+                device_binding_epoch,
                 installation_id,
                 device_key_fingerprint,
                 redeemed_at
@@ -211,14 +223,32 @@ class PostgreSqlDeviceRebindStore(
             statement.executeQuery().use { result ->
                 if (!result.next()) return DeviceRebindStoreResult.Failed
 
+                val storedBindingEpoch =
+                    (result.getObject("device_binding_epoch") as? Number)?.toLong()
                 val same =
                     result.getString("attempt_id") == attemptId &&
                     result.getString("subject") == claims.subject &&
                     result.getString("product_id") == claims.productId &&
+                    storedBindingEpoch == claims.deviceBindingEpoch &&
                     result.getString("installation_id") == installationId &&
                     result.getString("device_key_fingerprint") == deviceKeyFingerprint
 
                 if (!same) return DeviceRebindStoreResult.Exhausted
+
+                when (
+                    validateReplayStillCurrent(
+                        connection = connection,
+                        claims = claims,
+                        installationId = installationId,
+                        deviceKeyFingerprint = deviceKeyFingerprint
+                    )
+                ) {
+                    ReplayState.CURRENT -> Unit
+                    ReplayState.ENTITLEMENT_UNAVAILABLE ->
+                        return DeviceRebindStoreResult.EntitlementUnavailable
+                    ReplayState.STALE_BINDING_STATE ->
+                        return DeviceRebindStoreResult.StaleBindingEpoch
+                }
 
                 val reboundAt = result.getTimestamp("redeemed_at")?.toInstant()
                     ?: return DeviceRebindStoreResult.Failed
@@ -236,6 +266,62 @@ class PostgreSqlDeviceRebindStore(
         }
     }
 
+    private fun validateReplayStillCurrent(
+        connection: Connection,
+        claims: DeviceRebindCodeClaims,
+        installationId: String,
+        deviceKeyFingerprint: String
+    ): ReplayState {
+        connection.prepareStatement(
+            """
+            SELECT revoked_at, device_binding_required, device_binding_epoch
+            FROM licensing_entitlement
+            WHERE subject = ?
+              AND product_id = ?
+            FOR UPDATE
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, claims.subject)
+            statement.setString(2, claims.productId)
+            statement.executeQuery().use { result ->
+                if (!result.next()) return ReplayState.ENTITLEMENT_UNAVAILABLE
+                if (result.getTimestamp("revoked_at") != null) {
+                    return ReplayState.ENTITLEMENT_UNAVAILABLE
+                }
+                if (!result.getBoolean("device_binding_required")) {
+                    return ReplayState.ENTITLEMENT_UNAVAILABLE
+                }
+                if (
+                    result.getLong("device_binding_epoch") !=
+                    claims.deviceBindingEpoch
+                ) {
+                    return ReplayState.STALE_BINDING_STATE
+                }
+            }
+        }
+
+        connection.prepareStatement(
+            """
+            SELECT 1
+            FROM licensing_device_binding
+            WHERE subject = ?
+              AND installation_id = ?
+              AND device_key_fingerprint = ?
+              AND status = 'ACTIVE'
+            LIMIT 1
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, claims.subject)
+            statement.setString(2, installationId)
+            statement.setString(3, deviceKeyFingerprint)
+            statement.executeQuery().use { result ->
+                if (!result.next()) return ReplayState.STALE_BINDING_STATE
+            }
+        }
+
+        return ReplayState.CURRENT
+    }
+
     private fun record(
         claims: DeviceRebindCodeClaims,
         attemptId: String,
@@ -247,6 +333,7 @@ class PostgreSqlDeviceRebindStore(
         attemptId = attemptId,
         subject = claims.subject,
         productId = claims.productId,
+        deviceBindingEpoch = claims.deviceBindingEpoch,
         installationId = installationId,
         deviceKeyFingerprint = deviceKeyFingerprint,
         reboundAt = reboundAt
@@ -255,7 +342,14 @@ class PostgreSqlDeviceRebindStore(
     private enum class EntitlementState {
         READY,
         UNAVAILABLE,
-        ACTIVE_BINDING_EXISTS
+        ACTIVE_BINDING_EXISTS,
+        STALE_BINDING_EPOCH
+    }
+
+    private enum class ReplayState {
+        CURRENT,
+        ENTITLEMENT_UNAVAILABLE,
+        STALE_BINDING_STATE
     }
 }
 
@@ -274,12 +368,48 @@ object PostgreSqlDeviceRebindSchema {
                             CHECK (length(btrim(subject)) > 0),
                         product_id TEXT NOT NULL
                             CHECK (length(btrim(product_id)) > 0),
+                        device_binding_epoch BIGINT NOT NULL
+                            CHECK (device_binding_epoch >= 0),
                         installation_id TEXT NOT NULL
                             CHECK (length(btrim(installation_id)) > 0),
                         device_key_fingerprint TEXT NOT NULL
                             CHECK (length(btrim(device_key_fingerprint)) > 0),
                         redeemed_at TIMESTAMPTZ NOT NULL
                     )
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    ALTER TABLE licensing_device_rebind_redemption
+                    ADD COLUMN IF NOT EXISTS device_binding_epoch BIGINT
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    DO ${'$'}${'$'}
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'licensing_device_rebind_redemption_epoch_v2_ck'
+                        ) THEN
+                            ALTER TABLE licensing_device_rebind_redemption
+                            ADD CONSTRAINT licensing_device_rebind_redemption_epoch_v2_ck
+                            CHECK (
+                                (
+                                    code_id LIKE 'device-rebind-v2:%'
+                                    AND device_binding_epoch IS NOT NULL
+                                    AND device_binding_epoch >= 0
+                                )
+                                OR
+                                (
+                                    code_id NOT LIKE 'device-rebind-v2:%'
+                                    AND device_binding_epoch IS NULL
+                                )
+                            );
+                        END IF;
+                    END
+                    ${'$'}${'$'}
                     """.trimIndent()
                 )
             }

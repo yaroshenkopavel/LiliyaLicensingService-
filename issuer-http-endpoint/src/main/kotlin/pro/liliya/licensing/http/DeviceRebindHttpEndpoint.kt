@@ -81,6 +81,12 @@ class DeviceRebindHttpEndpoint(
                     DeviceRebindWireResponse.Rejected(1, "DEVICE_LIMIT_REACHED")
                 )
 
+            DeviceRebindResult.ReplacementStateChanged ->
+                response(
+                    409,
+                    DeviceRebindWireResponse.Rejected(1, "REPLACEMENT_STATE_CHANGED")
+                )
+
             DeviceRebindResult.EntitlementUnavailable ->
                 response(
                     409,

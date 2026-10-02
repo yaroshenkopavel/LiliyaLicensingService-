@@ -7,13 +7,18 @@ import kotlin.test.assertNull
 
 class LicenseAdminCliContractTest {
     @Test
-    fun revoke_device_requires_exact_subject_argument() {
+    fun revoke_device_requires_exact_subject_and_product() {
         val parsed = AdminCommand.parse(
-            arrayOf("revoke-device", "--subject", "subject-1")
+            arrayOf(
+                "revoke-device",
+                "--subject", "subject-1",
+                "--product", "liliya-pro"
+            )
         )
 
         val command = assertIs<AdminCommand.RevokeDevice>(parsed)
         assertEquals("subject-1", command.subject)
+        assertEquals("liliya-pro", command.productId)
         assertEquals("REVOKE_DEVICE", command.operationName)
     }
 
@@ -34,13 +39,15 @@ class LicenseAdminCliContractTest {
     }
 
     @Test
-    fun unknown_or_duplicate_arguments_fail_closed() {
+    fun missing_product_unknown_or_duplicate_arguments_fail_closed() {
+        assertNull(AdminCommand.parse(arrayOf("revoke-device", "--subject", "s")))
         assertNull(AdminCommand.parse(arrayOf("revoke-license", "--subject", "s")))
         assertNull(
             AdminCommand.parse(
                 arrayOf(
                     "revoke-device",
                     "--subject", "s",
+                    "--product", "p",
                     "--subject", "other"
                 )
             )

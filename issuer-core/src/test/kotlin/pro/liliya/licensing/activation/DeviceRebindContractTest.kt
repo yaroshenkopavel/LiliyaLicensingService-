@@ -6,6 +6,7 @@ import java.security.spec.ECGenParameterSpec
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 class DeviceRebindContractTest {
@@ -134,6 +135,36 @@ class DeviceRebindContractTest {
     }
 
     @Test
+    fun stale_binding_epoch_is_rejected() {
+        val store = FakeStore(currentBindingEpoch = 2)
+        val result = service(store).rebind(
+            DeviceRebindRequest(
+                rebindCode = signedCode(deviceBindingEpoch = 1),
+                attemptId = "attempt-1",
+                installationId = "installation-B",
+                deviceKeyFingerprint = "sha256:device-B"
+            ),
+            Instant.parse("2026-10-02T18:00:00Z")
+        )
+
+        assertIs<DeviceRebindResult.ReplacementStateChanged>(result)
+    }
+
+    @Test
+    fun ldr2_claims_reject_legacy_ldr1_code_id_namespace() {
+        assertFailsWith<IllegalArgumentException> {
+            DeviceRebindCodeClaims(
+                version = 2,
+                codeId = "device-rebind-v1:legacy",
+                subject = "subject-1",
+                productId = "liliya-pro",
+                deviceBindingEpoch = 1L,
+                expiresAt = Instant.parse("2026-10-03T00:00:00Z")
+            )
+        }
+    }
+
+    @Test
     fun expired_code_is_rejected_before_store() {
         val store = FakeStore()
         val result = service(store).rebind(
@@ -158,13 +189,15 @@ class DeviceRebindContractTest {
     )
 
     private fun signedCode(
+        deviceBindingEpoch: Long = 1L,
         expiresAt: Instant? = Instant.parse("2026-10-03T00:00:00Z")
     ): String {
         val claims = DeviceRebindCodeClaims(
-            version = 1,
-            codeId = "device-rebind-v1:test",
+            version = 2,
+            codeId = "device-rebind-v2:test",
             subject = "subject-1",
             productId = "liliya-pro",
+            deviceBindingEpoch = deviceBindingEpoch,
             expiresAt = expiresAt
         )
         val payload = DeviceRebindCodeCodec.signingPayload(claims)
@@ -184,7 +217,8 @@ class DeviceRebindContractTest {
 
     private class FakeStore(
         private val activeDeviceExists: Boolean = false,
-        private val entitlementUnavailable: Boolean = false
+        private val entitlementUnavailable: Boolean = false,
+        private val currentBindingEpoch: Long = 1L
     ) : DeviceRebindStore {
         var calls = 0
         private var record: DeviceRebindRecord? = null
@@ -200,6 +234,9 @@ class DeviceRebindContractTest {
             if (activeDeviceExists) return DeviceRebindStoreResult.ActiveDeviceExists
             if (entitlementUnavailable) {
                 return DeviceRebindStoreResult.EntitlementUnavailable
+            }
+            if (claims.deviceBindingEpoch != currentBindingEpoch) {
+                return DeviceRebindStoreResult.StaleBindingEpoch
             }
 
             val existing = record
@@ -220,6 +257,7 @@ class DeviceRebindContractTest {
                 attemptId = attemptId,
                 subject = claims.subject,
                 productId = claims.productId,
+                deviceBindingEpoch = claims.deviceBindingEpoch,
                 installationId = installationId,
                 deviceKeyFingerprint = deviceKeyFingerprint,
                 reboundAt = now

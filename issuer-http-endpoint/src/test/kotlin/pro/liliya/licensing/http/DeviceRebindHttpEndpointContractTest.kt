@@ -74,6 +74,24 @@ class DeviceRebindHttpEndpointContractTest {
     }
 
     @Test
+    fun changed_replacement_state_is_rejected_without_license_issue() {
+        val endpoint = endpoint(
+            store = FakeStore(staleBindingEpoch = true),
+            issuer = LicensingIssuerProcessor {
+                error("issuer must not run when replacement state changed")
+            }
+        )
+
+        val response = endpoint.handle(request(code(), "attempt-1"))
+
+        assertEquals(409, response.status)
+        assertTrue(
+            response.body.toString(Charsets.UTF_8)
+                .contains("\"reason\":\"REPLACEMENT_STATE_CHANGED\"")
+        )
+    }
+
+    @Test
     fun active_device_exists_is_rejected_without_license_issue() {
         val endpoint = endpoint(
             store = FakeStore(activeDeviceExists = true),
@@ -123,10 +141,11 @@ class DeviceRebindHttpEndpointContractTest {
 
     private fun code(): String {
         val claims = DeviceRebindCodeClaims(
-            version = 1,
-            codeId = "device-rebind-http-001",
+            version = 2,
+            codeId = "device-rebind-v2:http-001",
             subject = "subject-1",
             productId = "liliya-pro",
+            deviceBindingEpoch = 1L,
             expiresAt = Instant.parse("2026-10-03T00:00:00Z")
         )
         val signature = Signature.getInstance("SHA256withECDSA").run {
@@ -153,7 +172,8 @@ class DeviceRebindHttpEndpointContractTest {
 
     private class FakeStore(
         private val activeDeviceExists: Boolean = false,
-        private val entitlementUnavailable: Boolean = false
+        private val entitlementUnavailable: Boolean = false,
+        private val staleBindingEpoch: Boolean = false
     ) : DeviceRebindStore {
         private var record: DeviceRebindRecord? = null
 
@@ -169,6 +189,9 @@ class DeviceRebindHttpEndpointContractTest {
             }
             if (entitlementUnavailable) {
                 return DeviceRebindStoreResult.EntitlementUnavailable
+            }
+            if (staleBindingEpoch) {
+                return DeviceRebindStoreResult.StaleBindingEpoch
             }
 
             val existing = record
@@ -189,6 +212,7 @@ class DeviceRebindHttpEndpointContractTest {
                 attemptId = attemptId,
                 subject = claims.subject,
                 productId = claims.productId,
+                deviceBindingEpoch = claims.deviceBindingEpoch,
                 installationId = installationId,
                 deviceKeyFingerprint = deviceKeyFingerprint,
                 reboundAt = now

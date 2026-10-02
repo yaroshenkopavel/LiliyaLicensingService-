@@ -38,6 +38,8 @@ object PostgreSqlEntitlementSchema {
                                 CHECK (revocation_epoch >= 0),
                             revoked_at TIMESTAMPTZ,
                             device_binding_required BOOLEAN NOT NULL DEFAULT FALSE,
+                            device_binding_epoch BIGINT NOT NULL DEFAULT 0
+                                CHECK (device_binding_epoch >= 0),
                             PRIMARY KEY (subject, product_id),
                             UNIQUE (license_id),
                             CHECK (expires_at IS NULL OR expires_at > not_before),
@@ -63,6 +65,13 @@ object PostgreSqlEntitlementSchema {
                         """
                         ALTER TABLE licensing_entitlement
                         ADD COLUMN IF NOT EXISTS device_binding_required BOOLEAN NOT NULL DEFAULT FALSE
+                        """.trimIndent()
+                    )
+                    statement.execute(
+                        """
+                        ALTER TABLE licensing_entitlement
+                        ADD COLUMN IF NOT EXISTS device_binding_epoch BIGINT NOT NULL DEFAULT 0
+                        CHECK (device_binding_epoch >= 0)
                         """.trimIndent()
                     )
                 }
