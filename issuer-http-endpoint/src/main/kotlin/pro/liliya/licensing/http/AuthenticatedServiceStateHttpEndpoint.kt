@@ -110,7 +110,8 @@ class AuthenticatedServiceStateHttpEndpoint(
 class LicensingHttpRouter(
     private val entitlement: AuthenticatedLicenseHttpEndpoint,
     private val serviceState: AuthenticatedServiceStateHttpEndpoint,
-    private val activation: ActivationRedemptionHttpEndpoint? = null
+    private val activation: ActivationRedemptionHttpEndpoint? = null,
+    private val deviceRebind: DeviceRebindHttpEndpoint? = null
 ) {
     fun handle(request: LicenseHttpRequest): LicenseHttpResponse =
         when (request.path) {
@@ -123,10 +124,18 @@ class LicensingHttpRouter(
                         contentType = null,
                         body = byteArrayOf()
                     )
+            DeviceRebindHttpEndpoint.PATH ->
+                deviceRebind?.handle(request)
+                    ?: LicenseHttpResponse(
+                        status = 404,
+                        contentType = null,
+                        body = byteArrayOf()
+                    )
             else -> LicenseHttpResponse(status = 404, contentType = null, body = byteArrayOf())
         }
 
     override fun toString(): String =
         "LicensingHttpRouter(entitlement=<redacted>,serviceState=<redacted>," +
-            "activationConfigured=" + (activation != null) + ")"
+            "activationConfigured=" + (activation != null) +
+            ",deviceRebindConfigured=" + (deviceRebind != null) + ")"
 }
