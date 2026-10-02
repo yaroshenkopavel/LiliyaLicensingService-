@@ -41,17 +41,16 @@ fun main(args: Array<String>) {
     println("DEVICE_REBIND_WARNING=Treat this unused code as a credential until redeemed.")
 }
 
-private data class CliArgs(
+internal data class CliArgs(
     val subject: String,
     val productId: String,
-    val expiresAt: Instant?
+    val expiresAt: Instant
 ) {
     companion object {
         fun parse(args: Array<String>): CliArgs? {
             var subject: String? = null
             var product: String? = null
             var expiresAt: Instant? = null
-            var expirySeen = false
             var index = 0
 
             while (index < args.size) {
@@ -64,11 +63,8 @@ private data class CliArgs(
 
                     "--expires-at" -> {
                         val raw = args.getOrNull(++index) ?: return null
-                        expirySeen = true
-                        expiresAt =
-                            if (raw == "never") null
-                            else runCatching { Instant.parse(raw) }.getOrNull()
-                                ?: return null
+                        expiresAt = runCatching { Instant.parse(raw) }.getOrNull()
+                            ?: return null
                     }
 
                     else -> return null
@@ -76,7 +72,7 @@ private data class CliArgs(
                 index += 1
             }
 
-            if (subject == null || product == null || !expirySeen) return null
+            if (subject == null || product == null || expiresAt == null) return null
             return CliArgs(subject, product, expiresAt)
         }
     }
@@ -89,5 +85,5 @@ private fun requiredEnv(name: String): String =
 private fun failUsage(): Nothing =
     error(
         "usage: --subject <subject> --product <product-id> " +
-            "--expires-at <ISO-8601|never>"
+            "--expires-at <ISO-8601>"
     )

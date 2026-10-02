@@ -114,7 +114,9 @@ object DeviceRebindCodeVerifier {
             }
         }.getOrDefault(false)
         if (!valid) return DeviceRebindCodeVerificationResult.Invalid
-        if (envelope.claims.expiresAt?.isBefore(now) == true) {
+        val expiresAt = envelope.claims.expiresAt
+            ?: return DeviceRebindCodeVerificationResult.Invalid
+        if (expiresAt.isBefore(now)) {
             return DeviceRebindCodeVerificationResult.Expired
         }
         return DeviceRebindCodeVerificationResult.Verified(envelope.claims)
@@ -131,7 +133,7 @@ class DeviceRebindCodeGenerator(
     fun generate(
         subject: String,
         productId: String,
-        expiresAt: Instant?
+        expiresAt: Instant
     ): String {
         val bytes = ByteArray(16)
         random.nextBytes(bytes)

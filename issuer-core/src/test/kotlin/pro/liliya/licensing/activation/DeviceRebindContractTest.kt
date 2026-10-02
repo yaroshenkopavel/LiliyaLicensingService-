@@ -117,6 +117,23 @@ class DeviceRebindContractTest {
     }
 
     @Test
+    fun rebind_code_without_expiry_is_rejected_before_store() {
+        val store = FakeStore()
+        val result = service(store).rebind(
+            DeviceRebindRequest(
+                rebindCode = signedCode(expiresAt = null),
+                attemptId = "attempt-1",
+                installationId = "installation-B",
+                deviceKeyFingerprint = "sha256:device-B"
+            ),
+            Instant.parse("2026-10-02T18:00:00Z")
+        )
+
+        assertIs<DeviceRebindResult.InvalidCode>(result)
+        assertEquals(0, store.calls)
+    }
+
+    @Test
     fun expired_code_is_rejected_before_store() {
         val store = FakeStore()
         val result = service(store).rebind(
