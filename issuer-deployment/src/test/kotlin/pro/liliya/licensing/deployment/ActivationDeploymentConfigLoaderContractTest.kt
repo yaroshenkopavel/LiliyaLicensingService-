@@ -31,6 +31,8 @@ class ActivationDeploymentConfigLoaderContractTest {
             ActivationDeploymentConfigLoader.KEY_ID to "activation-key-v1",
             ActivationDeploymentConfigLoader.KEY_NAME to "activation-signing",
             ActivationDeploymentConfigLoader.KEY_VERSION to "2",
+            ActivationDeploymentConfigLoader.WRITER_USERNAME to "liliya_activation_writer",
+            ActivationDeploymentConfigLoader.WRITER_CREDENTIAL to "test-only-writer-credential",
             ActivationDeploymentConfigLoader.LIFETIME_SECONDS to "0",
             ActivationDeploymentConfigLoader.OFFLINE_SECONDS to "0"
         )

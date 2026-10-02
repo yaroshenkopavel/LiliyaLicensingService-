@@ -96,6 +96,7 @@ fun main() {
                     reason = LicensingOperationalReasonCode.ENTITLEMENT_SOURCE_UNAVAILABLE
                 )
             )
+            activationConfig?.close()
             material.close()
             config.close()
             exitProcess(2)
@@ -108,7 +109,9 @@ fun main() {
             runtimeMaterial = material,
             entitlementSource = entitlementSource,
             activationConfig = activationConfig
-        )
+        ).also {
+            activationConfig?.close()
+        }
     } catch (_: Exception) {
         sink.publish(
             LicensingOperationalEvent(
@@ -118,6 +121,7 @@ fun main() {
                 reason = LicensingOperationalReasonCode.INTERNAL_FAILURE
             )
         )
+        activationConfig?.close()
         material.close()
         config.close()
         exitProcess(2)

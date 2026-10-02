@@ -6,13 +6,16 @@ data class ActivationDeploymentConfig(
     val logicalKeyId: String,
     val openBaoKeyName: String,
     val openBaoKeyVersion: Int,
+    val writerUsername: String,
+    val writerCredential: DeploymentSecret,
     val entitlementLifetime: Duration?,
     val offlineLeaseDuration: Duration?
-) {
+) : AutoCloseable {
     init {
         require(logicalKeyId.isNotBlank())
         require(openBaoKeyName.isNotBlank())
         require(openBaoKeyVersion > 0)
+        require(writerUsername.isNotBlank())
         require(entitlementLifetime == null || !entitlementLifetime.isNegative)
         require(offlineLeaseDuration == null || !offlineLeaseDuration.isNegative)
     }
@@ -20,8 +23,13 @@ data class ActivationDeploymentConfig(
     override fun toString(): String =
         "ActivationDeploymentConfig(logicalKeyId=" + logicalKeyId +
             ",openBaoKeyName=<redacted>,openBaoKeyVersion=" + openBaoKeyVersion +
+            ",writerUsername=<redacted>,writerCredential=<redacted>" +
             ",entitlementLifetime=" + entitlementLifetime +
             ",offlineLeaseDuration=" + offlineLeaseDuration + ")"
+
+    override fun close() {
+        writerCredential.close()
+    }
 }
 
 sealed interface ActivationDeploymentConfigLoadResult {
@@ -58,6 +66,10 @@ class ActivationDeploymentConfigLoader(
                 logicalKeyId = raw.getValue(KEY_ID)!!,
                 openBaoKeyName = raw.getValue(KEY_NAME)!!,
                 openBaoKeyVersion = version,
+                writerUsername = raw.getValue(WRITER_USERNAME)!!,
+                writerCredential = DeploymentSecret.of(
+                    raw.getValue(WRITER_CREDENTIAL)!!.toCharArray()
+                ),
                 entitlementLifetime = lifetime,
                 offlineLeaseDuration = offline
             )
@@ -81,12 +93,16 @@ class ActivationDeploymentConfigLoader(
         const val KEY_ID = "LILIYA_ACTIVATION_KEY_ID"
         const val KEY_NAME = "LILIYA_ACTIVATION_OPENBAO_KEY_NAME"
         const val KEY_VERSION = "LILIYA_ACTIVATION_OPENBAO_KEY_VERSION"
+        const val WRITER_USERNAME = "LILIYA_ACTIVATION_POSTGRES_USERNAME"
+        const val WRITER_CREDENTIAL = "LILIYA_ACTIVATION_POSTGRES_CREDENTIAL"
         const val LIFETIME_SECONDS = "LILIYA_ACTIVATION_ENTITLEMENT_LIFETIME_SECONDS"
         const val OFFLINE_SECONDS = "LILIYA_ACTIVATION_OFFLINE_LEASE_SECONDS"
         val NAMES = listOf(
             KEY_ID,
             KEY_NAME,
             KEY_VERSION,
+            WRITER_USERNAME,
+            WRITER_CREDENTIAL,
             LIFETIME_SECONDS,
             OFFLINE_SECONDS
         )

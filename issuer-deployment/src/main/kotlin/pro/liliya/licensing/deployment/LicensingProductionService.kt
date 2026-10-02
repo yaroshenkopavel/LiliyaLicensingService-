@@ -384,6 +384,16 @@ class LicensingProductionService private constructor(
                 authentication = authentication
             )
 
+            val activationDataSource = activationConfig?.let { config ->
+                PGSimpleDataSource().apply {
+                    setURL(deploymentConfig.postgresJdbcUrl)
+                    user = config.writerUsername
+                    config.writerCredential.useChars { chars ->
+                        password = chars.concatToString()
+                    }
+                }
+            }
+
             val activationEndpoint = activationConfig?.let { config ->
                 val publicKeys = OpenBaoTransitActivationCodePublicKeyResolver.create(
                     client = openBaoClient,
@@ -392,7 +402,7 @@ class LicensingProductionService private constructor(
                     keyVersion = config.openBaoKeyVersion
                 )
                 val store = PostgreSqlActivationRedemptionStore(
-                    dataSource = dataSource,
+                    dataSource = requireNotNull(activationDataSource),
                     policy = ActivationEntitlementPolicy(
                         signingKeyId = deploymentConfig.openBaoKeyReference,
                         entitlementLifetime =
@@ -463,8 +473,8 @@ class LicensingProductionService private constructor(
 
             val dependencies = buildList<LicensingRuntimeDependency> {
                 add(PostgreSqlRuntimeReadinessDependency(dataSource))
-                activationConfig?.let {
-                    add(ActivationPostgreSqlRuntimeReadinessDependency(dataSource))
+                activationDataSource?.let {
+                    add(ActivationPostgreSqlRuntimeReadinessDependency(it))
                 }
                 add(
                     OpenBaoRuntimeReadinessDependency(
