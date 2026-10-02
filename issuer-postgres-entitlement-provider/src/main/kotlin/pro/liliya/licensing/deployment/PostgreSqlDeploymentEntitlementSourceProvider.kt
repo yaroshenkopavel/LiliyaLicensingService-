@@ -57,12 +57,14 @@ class PostgreSqlDeploymentEntitlementSourceProvider :
                     e.offline_lease_until,
                     e.revocation_epoch,
                     e.revoked_at,
+                    e.device_binding_required,
                     b.installation_id AS binding_installation_id,
                     b.device_key_fingerprint AS binding_device_key_fingerprint,
                     b.status AS binding_status
                 FROM licensing_entitlement e
                 LEFT JOIN licensing_device_binding b
                   ON b.subject = e.subject
+                 AND b.status = 'ACTIVE'
                 WHERE FALSE
                 """.trimIndent()
             ).use { statement ->
@@ -94,12 +96,14 @@ internal class PostgreSqlEntitlementSourcePort(
                         e.offline_lease_until,
                         e.revocation_epoch,
                         e.revoked_at,
+                        e.device_binding_required,
                         b.installation_id AS binding_installation_id,
                         b.device_key_fingerprint AS binding_device_key_fingerprint,
                         b.status AS binding_status
                     FROM licensing_entitlement e
                     LEFT JOIN licensing_device_binding b
                       ON b.subject = e.subject
+                     AND b.status = 'ACTIVE'
                     WHERE e.subject = ?
                       AND e.product_id = ?
                     """.trimIndent()
@@ -120,7 +124,13 @@ internal class PostgreSqlEntitlementSourcePort(
                             )
                         }
 
+                        val bindingRequired = result.getBoolean("device_binding_required")
                         val bindingStatus = result.getString("binding_status")
+                        if (bindingRequired && bindingStatus == null) {
+                            return EntitlementSourceResult.Ineligible(
+                                LicenseServiceFailure.ENROLLMENT_REQUIRED
+                            )
+                        }
                         val deviceBindingReference = if (bindingStatus != null) {
                             if (bindingStatus != "ACTIVE") {
                                 return EntitlementSourceResult.Ineligible(

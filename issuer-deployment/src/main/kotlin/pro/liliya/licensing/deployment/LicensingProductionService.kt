@@ -151,21 +151,33 @@ data class ActivationPostgreSqlRuntimeReadinessDependency(
             dataSource.connection.use { connection ->
                 connection.prepareStatement(
                     """
-                    SELECT code_id, attempt_id, subject, product_id, redeemed_at
-                    FROM licensing_activation_redemption
-                    WHERE 1 = 0
+                    SELECT
+                        has_table_privilege(current_user, 'licensing_entitlement', 'INSERT'),
+                        has_table_privilege(current_user, 'licensing_entitlement', 'SELECT'),
+                        has_table_privilege(current_user, 'licensing_entitlement', 'UPDATE'),
+                        has_table_privilege(current_user, 'licensing_entitlement', 'DELETE'),
+                        has_table_privilege(current_user, 'licensing_activation_redemption', 'SELECT'),
+                        has_table_privilege(current_user, 'licensing_activation_redemption', 'INSERT'),
+                        has_table_privilege(current_user, 'licensing_activation_redemption', 'UPDATE'),
+                        has_table_privilege(current_user, 'licensing_activation_redemption', 'DELETE'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'INSERT'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'SELECT'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'UPDATE'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'DELETE')
                     """.trimIndent()
                 ).use { statement ->
-                    statement.executeQuery().use { it.metaData.columnCount }
-                }
-                connection.prepareStatement(
-                    """
-                    SELECT subject, product_id
-                    FROM licensing_entitlement
-                    WHERE 1 = 0
-                    """.trimIndent()
-                ).use { statement ->
-                    statement.executeQuery().use { it.metaData.columnCount }
+                    statement.executeQuery().use { result ->
+                        if (!result.next()) error("activation PostgreSQL privilege row missing")
+                        val expected = listOf(
+                            true, false, false, false,
+                            true, true, false, false,
+                            true, false, false, false
+                        )
+                        val actual = (1..12).map(result::getBoolean)
+                        check(actual == expected) {
+                            "activation PostgreSQL writer privileges are not minimal"
+                        }
+                    }
                 }
             }
             LicensingRuntimeDependencyResult.Ready

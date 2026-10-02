@@ -181,19 +181,21 @@ class PostgreSqlActivationRedemptionStore(
         connection.prepareStatement(
             """
             INSERT INTO licensing_device_binding (
+                binding_id,
                 subject,
                 installation_id,
                 device_key_fingerprint,
                 status,
                 bound_at,
                 revoked_at
-            ) VALUES (?, ?, ?, 'ACTIVE', ?, NULL)
+            ) VALUES (?, ?, ?, ?, 'ACTIVE', ?, NULL)
             """.trimIndent()
         ).use { statement ->
-            statement.setString(1, subject)
-            statement.setString(2, installationId)
-            statement.setString(3, deviceKeyFingerprint)
-            statement.setTimestamp(4, java.sql.Timestamp.from(now))
+            statement.setString(1, "bind-${UUID.randomUUID()}")
+            statement.setString(2, subject)
+            statement.setString(3, installationId)
+            statement.setString(4, deviceKeyFingerprint)
+            statement.setTimestamp(5, java.sql.Timestamp.from(now))
             statement.executeUpdate()
         }
     }
@@ -238,8 +240,8 @@ class PostgreSqlActivationRedemptionStore(
             INSERT INTO licensing_entitlement (
                 license_id, subject, product_id, features, version,
                 signing_key_id, issued_at, not_before, expires_at,
-                offline_lease_until, revocation_epoch
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                offline_lease_until, revocation_epoch, device_binding_required
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, TRUE)
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, "lic-${UUID.randomUUID()}")
@@ -310,7 +312,9 @@ object PostgreSqlActivationRedemptionSchema {
                 statement.execute(
                     """
                     CREATE TABLE IF NOT EXISTS licensing_device_binding (
-                        subject TEXT PRIMARY KEY
+                        binding_id TEXT PRIMARY KEY
+                            CHECK (length(btrim(binding_id)) > 0),
+                        subject TEXT NOT NULL
                             CHECK (length(btrim(subject)) > 0),
                         installation_id TEXT NOT NULL
                             CHECK (length(btrim(installation_id)) > 0),
@@ -325,6 +329,13 @@ object PostgreSqlActivationRedemptionSchema {
                             (status = 'REVOKED' AND revoked_at IS NOT NULL)
                         )
                     )
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS licensing_device_binding_one_active_subject
+                    ON licensing_device_binding(subject)
+                    WHERE status = 'ACTIVE'
                     """.trimIndent()
                 )
             }
