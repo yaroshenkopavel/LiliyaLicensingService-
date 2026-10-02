@@ -14,7 +14,8 @@ data class CanonicalLicenseEntitlement(
     val expiresAt: Instant?,
     val offlineLeaseUntil: Instant?,
     val revocationEpoch: Long,
-    val replaySequence: Long?
+    val replaySequence: Long?,
+    val deviceBindingReference: String? = null
 ) {
     init {
         require(id.isNotBlank()) { "license id must not be blank" }
@@ -27,6 +28,9 @@ data class CanonicalLicenseEntitlement(
         require(revocationEpoch >= 0L) { "license revocation epoch must not be negative" }
         require(replaySequence == null || replaySequence >= 0L) {
             "license replay sequence must not be negative"
+        }
+        require(deviceBindingReference == null || deviceBindingReference.isNotBlank()) {
+            "device binding reference must not be blank"
         }
         require(expiresAt == null || expiresAt.isAfter(notBefore)) {
             "license expiry must be after not-before"
@@ -76,7 +80,8 @@ object CanonicalEntitlementComposer {
                     expiresAt = decision.expiresAt,
                     offlineLeaseUntil = decision.offlineLeaseUntil,
                     revocationEpoch = decision.revocationEpoch,
-                    replaySequence = decision.replaySequence
+                    replaySequence = decision.replaySequence,
+                    deviceBindingReference = decision.deviceBindingReference
                 )
             )
         } catch (_: IllegalArgumentException) {

@@ -21,6 +21,8 @@ class ActivationCodeGenerator(
         productId: String,
         features: Set<String>,
         expiresAt: Instant?,
+        entitlementLifetimeSeconds: Long? = null,
+        offlineLeaseSeconds: Long? = null,
         maxRedemptions: Int = 1
     ): String {
         val claims = ActivationCodeClaims(
@@ -29,6 +31,8 @@ class ActivationCodeGenerator(
             productId = productId,
             features = features,
             expiresAt = expiresAt,
+            entitlementLifetimeSeconds = entitlementLifetimeSeconds,
+            offlineLeaseSeconds = offlineLeaseSeconds,
             maxRedemptions = maxRedemptions
         )
         val payload = ActivationCodeCodec.signingPayload(claims)

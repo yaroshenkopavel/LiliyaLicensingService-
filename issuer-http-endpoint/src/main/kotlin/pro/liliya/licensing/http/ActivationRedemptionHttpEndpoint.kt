@@ -4,6 +4,7 @@ import java.time.Clock
 import pro.liliya.licensing.activation.ActivationRedemptionRequest
 import pro.liliya.licensing.activation.ActivationRedemptionResult
 import pro.liliya.licensing.activation.ActivationRedemptionService
+import pro.liliya.licensing.activation.DeviceBindingReference
 import pro.liliya.licensing.issuer.LicensingIssuerResult
 import pro.liliya.licensing.protocol.LicenseOperation
 import pro.liliya.licensing.protocol.LicenseProtocolVersion
@@ -38,7 +39,9 @@ class ActivationRedemptionHttpEndpoint(
             service.redeem(
                 ActivationRedemptionRequest(
                     activationCode = wire.activationCode,
-                    attemptId = wire.attemptId
+                    attemptId = wire.attemptId,
+                    installationId = wire.installationId,
+                    deviceKeyFingerprint = wire.deviceKeyFingerprint
                 ),
                 clock.instant()
             )
@@ -51,14 +54,22 @@ class ActivationRedemptionHttpEndpoint(
                 issueLicense(
                     subject = redemption.subject,
                     productId = redemption.claims.productId,
-                    attemptId = wire.attemptId
+                    attemptId = wire.attemptId,
+                    deviceBindingReference = DeviceBindingReference.create(
+                        installationId = wire.installationId,
+                        deviceKeyFingerprint = wire.deviceKeyFingerprint
+                    )
                 )
 
             is ActivationRedemptionResult.IdempotentReplay ->
                 issueLicense(
                     subject = redemption.subject,
                     productId = redemption.claims.productId,
-                    attemptId = wire.attemptId
+                    attemptId = wire.attemptId,
+                    deviceBindingReference = DeviceBindingReference.create(
+                        installationId = wire.installationId,
+                        deviceKeyFingerprint = wire.deviceKeyFingerprint
+                    )
                 )
 
             ActivationRedemptionResult.InvalidCode ->
@@ -70,6 +81,9 @@ class ActivationRedemptionHttpEndpoint(
             ActivationRedemptionResult.CodeExhausted ->
                 response(409, ActivationWireResponse.Rejected(1, "CODE_EXHAUSTED"))
 
+            ActivationRedemptionResult.DeviceLimitReached ->
+                response(409, ActivationWireResponse.Rejected(1, "DEVICE_LIMIT_REACHED"))
+
             ActivationRedemptionResult.StoreUnavailable ->
                 empty(503)
         }
@@ -78,7 +92,8 @@ class ActivationRedemptionHttpEndpoint(
     private fun issueLicense(
         subject: String,
         productId: String,
-        attemptId: String
+        attemptId: String,
+        deviceBindingReference: String
     ): LicenseHttpResponse {
         val result = try {
             issuer.process(
@@ -87,7 +102,8 @@ class ActivationRedemptionHttpEndpoint(
                     operation = LicenseOperation.ISSUE,
                     productId = productId,
                     subjectReference = subject,
-                    requestId = attemptId
+                    requestId = attemptId,
+                    enrollmentReference = deviceBindingReference
                 )
             )
         } catch (_: Throwable) {

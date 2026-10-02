@@ -15,7 +15,8 @@ data class EntitlementSourceRecord(
     val notBefore: Instant,
     val expiresAt: Instant?,
     val offlineLeaseUntil: Instant?,
-    val revocationEpoch: Long
+    val revocationEpoch: Long,
+    val deviceBindingReference: String? = null
 ) {
     override fun toString(): String =
         "EntitlementSourceRecord(licenseId=" + licenseId +

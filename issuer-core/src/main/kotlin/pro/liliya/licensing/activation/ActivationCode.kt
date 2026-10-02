@@ -17,6 +17,8 @@ data class ActivationCodeClaims(
     val productId: String,
     val features: Set<String>,
     val expiresAt: Instant?,
+    val entitlementLifetimeSeconds: Long? = null,
+    val offlineLeaseSeconds: Long? = null,
     val maxRedemptions: Int
 ) {
     init {
@@ -24,6 +26,13 @@ data class ActivationCodeClaims(
         require(codeId.isNotBlank())
         require(productId.isNotBlank())
         require(features.isNotEmpty() && features.none { it.isBlank() })
+        require(entitlementLifetimeSeconds == null || entitlementLifetimeSeconds > 0)
+        require(offlineLeaseSeconds == null || offlineLeaseSeconds > 0)
+        require(
+            entitlementLifetimeSeconds == null ||
+                offlineLeaseSeconds == null ||
+                offlineLeaseSeconds <= entitlementLifetimeSeconds
+        )
         require(maxRedemptions > 0)
     }
 }
@@ -96,6 +105,10 @@ object ActivationCodeCodec {
                 ordered.forEach(out::writeUTF)
                 out.writeBoolean(claims.expiresAt != null)
                 claims.expiresAt?.let { out.writeLong(it.toEpochMilli()) }
+                out.writeBoolean(claims.entitlementLifetimeSeconds != null)
+                claims.entitlementLifetimeSeconds?.let(out::writeLong)
+                out.writeBoolean(claims.offlineLeaseSeconds != null)
+                claims.offlineLeaseSeconds?.let(out::writeLong)
                 out.writeInt(claims.maxRedemptions)
             }
             bytes.toByteArray()
@@ -117,6 +130,10 @@ object ActivationCodeCodec {
             } else {
                 null
             }
+            val entitlementLifetimeSeconds =
+                if (input.readBoolean()) input.readLong() else null
+            val offlineLeaseSeconds =
+                if (input.readBoolean()) input.readLong() else null
             val maxRedemptions = input.readInt()
             if (input.available() != 0) return null
             runCatching {
@@ -126,6 +143,8 @@ object ActivationCodeCodec {
                     productId = productId,
                     features = features,
                     expiresAt = expiresAt,
+                    entitlementLifetimeSeconds = entitlementLifetimeSeconds,
+                    offlineLeaseSeconds = offlineLeaseSeconds,
                     maxRedemptions = maxRedemptions
                 )
             }.getOrNull()

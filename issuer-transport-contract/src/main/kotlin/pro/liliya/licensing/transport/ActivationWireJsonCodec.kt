@@ -7,7 +7,9 @@ import pro.liliya.licensing.signing.SignedLicenseEnvelope
 data class ActivationWireRequest(
     val wireVersion: Int,
     val activationCode: String,
-    val attemptId: String
+    val attemptId: String,
+    val installationId: String,
+    val deviceKeyFingerprint: String
 )
 
 sealed interface ActivationWireResponse {
@@ -39,15 +41,25 @@ object ActivationWireJsonCodec {
         val version = root.path("wireVersion").asInt(-1)
         val code = root.path("activationCode").asText("")
         val attemptId = root.path("attemptId").asText("")
+        val installationId = root.path("installationId").asText("")
+        val deviceKeyFingerprint = root.path("deviceKeyFingerprint").asText("")
         if (
             version != currentVersion ||
             code.isBlank() ||
-            attemptId.isBlank()
+            attemptId.isBlank() ||
+            installationId.isBlank() ||
+            deviceKeyFingerprint.isBlank()
         ) {
             ActivationWireDecodeResult.Rejected
         } else {
             ActivationWireDecodeResult.Decoded(
-                ActivationWireRequest(version, code, attemptId)
+                ActivationWireRequest(
+                    wireVersion = version,
+                    activationCode = code,
+                    attemptId = attemptId,
+                    installationId = installationId,
+                    deviceKeyFingerprint = deviceKeyFingerprint
+                )
             )
         }
     } catch (_: Throwable) {

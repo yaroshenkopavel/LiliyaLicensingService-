@@ -3,6 +3,7 @@
 import java.sql.ResultSet
 import javax.sql.DataSource
 import org.postgresql.ds.PGSimpleDataSource
+import pro.liliya.licensing.activation.DeviceBindingReference
 import pro.liliya.licensing.issuer.EntitlementSourcePort
 import pro.liliya.licensing.issuer.EntitlementSourceRecord
 import pro.liliya.licensing.issuer.EntitlementSourceResult
@@ -44,18 +45,24 @@ class PostgreSqlDeploymentEntitlementSourceProvider :
             connection.prepareStatement(
                 """
                 SELECT
-                    license_id,
-                    subject,
-                    product_id,
-                    features,
-                    version,
-                    signing_key_id,
-                    issued_at,
-                    not_before,
-                    expires_at,
-                    offline_lease_until,
-                    revocation_epoch
-                FROM licensing_entitlement
+                    e.license_id,
+                    e.subject,
+                    e.product_id,
+                    e.features,
+                    e.version,
+                    e.signing_key_id,
+                    e.issued_at,
+                    e.not_before,
+                    e.expires_at,
+                    e.offline_lease_until,
+                    e.revocation_epoch,
+                    e.revoked_at,
+                    b.installation_id AS binding_installation_id,
+                    b.device_key_fingerprint AS binding_device_key_fingerprint,
+                    b.status AS binding_status
+                FROM licensing_entitlement e
+                LEFT JOIN licensing_device_binding b
+                  ON b.subject = e.subject
                 WHERE FALSE
                 """.trimIndent()
             ).use { statement ->
@@ -75,20 +82,26 @@ internal class PostgreSqlEntitlementSourcePort(
                 connection.prepareStatement(
                     """
                     SELECT
-                        license_id,
-                        subject,
-                        product_id,
-                        features,
-                        version,
-                        signing_key_id,
-                        issued_at,
-                        not_before,
-                        expires_at,
-                        offline_lease_until,
-                        revocation_epoch
-                    FROM licensing_entitlement
-                    WHERE subject = ?
-                      AND product_id = ?
+                        e.license_id,
+                        e.subject,
+                        e.product_id,
+                        e.features,
+                        e.version,
+                        e.signing_key_id,
+                        e.issued_at,
+                        e.not_before,
+                        e.expires_at,
+                        e.offline_lease_until,
+                        e.revocation_epoch,
+                        e.revoked_at,
+                        b.installation_id AS binding_installation_id,
+                        b.device_key_fingerprint AS binding_device_key_fingerprint,
+                        b.status AS binding_status
+                    FROM licensing_entitlement e
+                    LEFT JOIN licensing_device_binding b
+                      ON b.subject = e.subject
+                    WHERE e.subject = ?
+                      AND e.product_id = ?
                     """.trimIndent()
                 ).use { statement ->
                     statement.setString(1, request.subjectReference)
@@ -101,7 +114,48 @@ internal class PostgreSqlEntitlementSourcePort(
                             )
                         }
 
-                        val record = result.toEntitlementRecord()
+                        if (result.getTimestamp("revoked_at") != null) {
+                            return EntitlementSourceResult.Ineligible(
+                                LicenseServiceFailure.REVOCATION_CONFLICT
+                            )
+                        }
+
+                        val bindingStatus = result.getString("binding_status")
+                        val deviceBindingReference = if (bindingStatus != null) {
+                            if (bindingStatus != "ACTIVE") {
+                                return EntitlementSourceResult.Ineligible(
+                                    LicenseServiceFailure.DEVICE_PROOF_REJECTED
+                                )
+                            }
+                            val installationId =
+                                result.getString("binding_installation_id")
+                                    ?: return EntitlementSourceResult.Failed(
+                                        LicenseServiceFailure.ENTITLEMENT_SOURCE_UNAVAILABLE
+                                    )
+                            val fingerprint =
+                                result.getString("binding_device_key_fingerprint")
+                                    ?: return EntitlementSourceResult.Failed(
+                                        LicenseServiceFailure.ENTITLEMENT_SOURCE_UNAVAILABLE
+                                    )
+                            val expected = DeviceBindingReference.create(
+                                installationId = installationId,
+                                deviceKeyFingerprint = fingerprint
+                            )
+                            val supplied = request.enrollmentReference
+                                ?: return EntitlementSourceResult.Ineligible(
+                                    LicenseServiceFailure.ENROLLMENT_REQUIRED
+                                )
+                            if (supplied != expected) {
+                                return EntitlementSourceResult.Ineligible(
+                                    LicenseServiceFailure.DEVICE_PROOF_REJECTED
+                                )
+                            }
+                            expected
+                        } else {
+                            null
+                        }
+
+                        val record = result.toEntitlementRecord(deviceBindingReference)
                             ?: return EntitlementSourceResult.Failed(
                                 LicenseServiceFailure.ENTITLEMENT_SOURCE_UNAVAILABLE
                             )
@@ -122,7 +176,9 @@ internal class PostgreSqlEntitlementSourcePort(
             )
         }
 
-    private fun ResultSet.toEntitlementRecord(): EntitlementSourceRecord? {
+    private fun ResultSet.toEntitlementRecord(
+        deviceBindingReference: String?
+    ): EntitlementSourceRecord? {
         val sqlFeatures = getArray("features") ?: return null
 
         val features = try {
@@ -174,7 +230,8 @@ internal class PostgreSqlEntitlementSourcePort(
             notBefore = notBefore,
             expiresAt = expiresAt,
             offlineLeaseUntil = offlineLeaseUntil,
-            revocationEpoch = revocationEpoch
+            revocationEpoch = revocationEpoch,
+            deviceBindingReference = deviceBindingReference
         )
     }
 }

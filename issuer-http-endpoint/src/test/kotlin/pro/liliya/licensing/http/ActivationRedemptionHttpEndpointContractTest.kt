@@ -109,8 +109,15 @@ class ActivationRedemptionHttpEndpointContractTest {
     ) = LicenseHttpRequest(
         method = LicenseHttpMethod.POST,
         path = ActivationRedemptionHttpEndpoint.PATH,
-        body = """{"wireVersion":1,"activationCode":"$code","attemptId":"$attemptId"}"""
-            .toByteArray(),
+        body = """
+            {
+              "wireVersion":1,
+              "activationCode":"$code",
+              "attemptId":"$attemptId",
+              "installationId":"installation-A",
+              "deviceKeyFingerprint":"sha256:device-A"
+            }
+            """.trimIndent().toByteArray(),
         authentication = null
     )
 
@@ -149,15 +156,22 @@ class ActivationRedemptionHttpEndpointContractTest {
             claims: ActivationCodeClaims,
             attemptId: String,
             proposedSubject: String,
+            installationId: String,
+            deviceKeyFingerprint: String,
             now: Instant
         ): ActivationRedemptionStoreResult {
             val existing = record
             if (existing != null) {
-                return if (existing.attemptId == attemptId) {
-                    ActivationRedemptionStoreResult.Replay(existing)
-                } else {
-                    ActivationRedemptionStoreResult.Exhausted
+                if (existing.attemptId != attemptId) {
+                    return ActivationRedemptionStoreResult.Exhausted
                 }
+                if (
+                    existing.installationId != installationId ||
+                    existing.deviceKeyFingerprint != deviceKeyFingerprint
+                ) {
+                    return ActivationRedemptionStoreResult.DeviceLimitReached
+                }
+                return ActivationRedemptionStoreResult.Replay(existing)
             }
             val created = ActivationRedemptionRecord(
                 codeId = claims.codeId,
@@ -165,6 +179,8 @@ class ActivationRedemptionHttpEndpointContractTest {
                 subject = proposedSubject,
                 productId = claims.productId,
                 features = claims.features,
+                installationId = installationId,
+                deviceKeyFingerprint = deviceKeyFingerprint,
                 redeemedAt = now
             )
             record = created

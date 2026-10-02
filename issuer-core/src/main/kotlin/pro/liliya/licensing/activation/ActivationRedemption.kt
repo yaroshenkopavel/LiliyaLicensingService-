@@ -6,15 +6,20 @@ import java.util.Base64
 
 data class ActivationRedemptionRequest(
     val activationCode: String,
-    val attemptId: String
+    val attemptId: String,
+    val installationId: String,
+    val deviceKeyFingerprint: String
 ) {
     init {
         require(activationCode.isNotBlank())
         require(attemptId.isNotBlank())
+        require(installationId.isNotBlank())
+        require(deviceKeyFingerprint.isNotBlank())
     }
 
     override fun toString(): String =
-        "ActivationRedemptionRequest(activationCode=<redacted>,attemptId=<redacted>)"
+        "ActivationRedemptionRequest(activationCode=<redacted>,attemptId=<redacted>," +
+            "installationId=<redacted>,deviceKeyFingerprint=<redacted>)"
 }
 
 sealed interface ActivationRedemptionResult {
@@ -25,6 +30,7 @@ sealed interface ActivationRedemptionResult {
     data object InvalidCode : ActivationRedemptionResult
     data object ExpiredCode : ActivationRedemptionResult
     data object CodeExhausted : ActivationRedemptionResult
+    data object DeviceLimitReached : ActivationRedemptionResult
     data object StoreUnavailable : ActivationRedemptionResult
 }
 data class ActivationRedemptionRecord(
@@ -33,6 +39,8 @@ data class ActivationRedemptionRecord(
     val subject: String,
     val productId: String,
     val features: Set<String>,
+    val installationId: String,
+    val deviceKeyFingerprint: String,
     val redeemedAt: Instant
 )
 
@@ -40,6 +48,7 @@ sealed interface ActivationRedemptionStoreResult {
     data class Created(val record: ActivationRedemptionRecord) : ActivationRedemptionStoreResult
     data class Replay(val record: ActivationRedemptionRecord) : ActivationRedemptionStoreResult
     data object Exhausted : ActivationRedemptionStoreResult
+    data object DeviceLimitReached : ActivationRedemptionStoreResult
     data object Failed : ActivationRedemptionStoreResult
 }
 
@@ -48,6 +57,8 @@ fun interface ActivationRedemptionStore {
         claims: ActivationCodeClaims,
         attemptId: String,
         proposedSubject: String,
+        installationId: String,
+        deviceKeyFingerprint: String,
         now: Instant
     ): ActivationRedemptionStoreResult
 }
@@ -105,6 +116,8 @@ class ActivationRedemptionService(
                 claims = claims,
                 attemptId = request.attemptId,
                 proposedSubject = proposedSubject,
+                installationId = request.installationId,
+                deviceKeyFingerprint = request.deviceKeyFingerprint,
                 now = now
             )
         ) {
@@ -120,6 +133,8 @@ class ActivationRedemptionService(
                 )
             ActivationRedemptionStoreResult.Exhausted ->
                 ActivationRedemptionResult.CodeExhausted
+            ActivationRedemptionStoreResult.DeviceLimitReached ->
+                ActivationRedemptionResult.DeviceLimitReached
             ActivationRedemptionStoreResult.Failed ->
                 ActivationRedemptionResult.StoreUnavailable
         }

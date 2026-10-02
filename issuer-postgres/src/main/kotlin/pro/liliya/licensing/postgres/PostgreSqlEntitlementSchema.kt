@@ -36,6 +36,7 @@ object PostgreSqlEntitlementSchema {
                             offline_lease_until TIMESTAMPTZ,
                             revocation_epoch BIGINT NOT NULL
                                 CHECK (revocation_epoch >= 0),
+                            revoked_at TIMESTAMPTZ,
                             PRIMARY KEY (subject, product_id),
                             UNIQUE (license_id),
                             CHECK (expires_at IS NULL OR expires_at > not_before),
@@ -49,6 +50,12 @@ object PostgreSqlEntitlementSchema {
                                 offline_lease_until <= expires_at
                             )
                         )
+                        """.trimIndent()
+                    )
+                    statement.execute(
+                        """
+                        ALTER TABLE licensing_entitlement
+                        ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ
                         """.trimIndent()
                     )
                 }

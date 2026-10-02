@@ -16,10 +16,10 @@ class ActivationRedemptionContractTest {
     }
 
     @Test
-    fun first_redemption_creates_subject_and_same_attempt_replays() {
+    fun first_redemption_creates_subject_and_same_device_attempt_replays() {
         val store = FakeStore()
         val service = service(store)
-        val request = ActivationRedemptionRequest(signedCode(), "attempt-1")
+        val request = request(signedCode(), "attempt-1")
         val now = Instant.parse("2026-10-02T10:00:00Z")
 
         val first = assertIs<ActivationRedemptionResult.Activated>(
@@ -32,6 +32,30 @@ class ActivationRedemptionContractTest {
         assertEquals(first.subject, replay.subject)
         assertEquals(1, store.createdCount)
     }
+
+    @Test
+    fun same_attempt_from_different_device_is_rejected() {
+        val store = FakeStore()
+        val service = service(store)
+        val code = signedCode()
+        val now = Instant.parse("2026-10-02T10:00:00Z")
+
+        assertIs<ActivationRedemptionResult.Activated>(
+            service.redeem(request(code, "attempt-1"), now)
+        )
+        assertIs<ActivationRedemptionResult.DeviceLimitReached>(
+            service.redeem(
+                request(
+                    code = code,
+                    attemptId = "attempt-1",
+                    installationId = "installation-B",
+                    fingerprint = "sha256:device-B"
+                ),
+                now.plusSeconds(1)
+            )
+        )
+    }
+
     @Test
     fun reused_code_with_different_attempt_is_exhausted() {
         val store = FakeStore()
@@ -40,11 +64,11 @@ class ActivationRedemptionContractTest {
         val now = Instant.parse("2026-10-02T10:00:00Z")
 
         val first = assertIs<ActivationRedemptionResult.Activated>(
-            service.redeem(ActivationRedemptionRequest(code, "attempt-1"), now)
+            service.redeem(request(code, "attempt-1"), now)
         )
         assertIs<ActivationRedemptionResult.CodeExhausted>(
             service.redeem(
-                ActivationRedemptionRequest(code, "attempt-2"),
+                request(code, "attempt-2"),
                 now.plusSeconds(1)
             )
         )
@@ -57,13 +81,26 @@ class ActivationRedemptionContractTest {
     fun invalid_code_never_reaches_store() {
         val store = FakeStore()
         val result = service(store).redeem(
-            ActivationRedemptionRequest("invalid", "attempt-1"),
+            request("invalid", "attempt-1"),
             Instant.parse("2026-10-02T10:00:00Z")
         )
 
         assertIs<ActivationRedemptionResult.InvalidCode>(result)
         assertEquals(0, store.calls)
     }
+
+    private fun request(
+        code: String,
+        attemptId: String,
+        installationId: String = "installation-A",
+        fingerprint: String = "sha256:device-A"
+    ) = ActivationRedemptionRequest(
+        activationCode = code,
+        attemptId = attemptId,
+        installationId = installationId,
+        deviceKeyFingerprint = fingerprint
+    )
+
     private fun service(store: FakeStore) = ActivationRedemptionService(
         publicKeys = ActivationCodePublicKeyResolver { keyPair.public },
         store = store,
@@ -95,27 +132,38 @@ class ActivationRedemptionContractTest {
         var calls = 0
         var createdCount = 0
         private var record: ActivationRedemptionRecord? = null
+
         override fun redeem(
             claims: ActivationCodeClaims,
             attemptId: String,
             proposedSubject: String,
+            installationId: String,
+            deviceKeyFingerprint: String,
             now: Instant
         ): ActivationRedemptionStoreResult {
             calls += 1
             val existing = record
             if (existing != null) {
-                return if (existing.attemptId == attemptId) {
-                    ActivationRedemptionStoreResult.Replay(existing)
-                } else {
-                    ActivationRedemptionStoreResult.Exhausted
+                if (existing.attemptId != attemptId) {
+                    return ActivationRedemptionStoreResult.Exhausted
                 }
+                if (
+                    existing.installationId != installationId ||
+                    existing.deviceKeyFingerprint != deviceKeyFingerprint
+                ) {
+                    return ActivationRedemptionStoreResult.DeviceLimitReached
+                }
+                return ActivationRedemptionStoreResult.Replay(existing)
             }
+
             val created = ActivationRedemptionRecord(
                 codeId = claims.codeId,
                 attemptId = attemptId,
                 subject = proposedSubject,
                 productId = claims.productId,
                 features = claims.features,
+                installationId = installationId,
+                deviceKeyFingerprint = deviceKeyFingerprint,
                 redeemedAt = now
             )
             record = created

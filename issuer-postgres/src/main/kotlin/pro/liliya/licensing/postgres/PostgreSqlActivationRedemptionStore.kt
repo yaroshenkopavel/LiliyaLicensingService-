@@ -32,21 +32,49 @@ class PostgreSqlActivationRedemptionStore(
         claims: ActivationCodeClaims,
         attemptId: String,
         proposedSubject: String,
+        installationId: String,
+        deviceKeyFingerprint: String,
         now: Instant
     ): ActivationRedemptionStoreResult = try {
         dataSource.connection.use { connection ->
             connection.autoCommit = false
             try {
                 val inserted = reserveCode(
-                    connection, claims, attemptId, proposedSubject, now
+                    connection = connection,
+                    claims = claims,
+                    attemptId = attemptId,
+                    subject = proposedSubject,
+                    installationId = installationId,
+                    deviceKeyFingerprint = deviceKeyFingerprint,
+                    now = now
                 )
                 val result = if (inserted) {
                     insertEntitlement(connection, claims, proposedSubject, now)
+                    insertDeviceBinding(
+                        connection = connection,
+                        subject = proposedSubject,
+                        installationId = installationId,
+                        deviceKeyFingerprint = deviceKeyFingerprint,
+                        now = now
+                    )
                     ActivationRedemptionStoreResult.Created(
-                        record(claims, attemptId, proposedSubject, now)
+                        record(
+                            claims = claims,
+                            attemptId = attemptId,
+                            subject = proposedSubject,
+                            installationId = installationId,
+                            deviceKeyFingerprint = deviceKeyFingerprint,
+                            redeemedAt = now
+                        )
                     )
                 } else {
-                    existingResult(connection, claims, attemptId)
+                    existingResult(
+                        connection = connection,
+                        claims = claims,
+                        attemptId = attemptId,
+                        installationId = installationId,
+                        deviceKeyFingerprint = deviceKeyFingerprint
+                    )
                 }
                 connection.commit()
                 result
@@ -64,13 +92,16 @@ class PostgreSqlActivationRedemptionStore(
         claims: ActivationCodeClaims,
         attemptId: String,
         subject: String,
+        installationId: String,
+        deviceKeyFingerprint: String,
         now: Instant
     ): Boolean {
         connection.prepareStatement(
             """
             INSERT INTO licensing_activation_redemption (
-                code_id, attempt_id, subject, product_id, redeemed_at
-            ) VALUES (?, ?, ?, ?, ?)
+                code_id, attempt_id, subject, product_id,
+                installation_id, device_key_fingerprint, redeemed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (code_id) DO NOTHING
             """.trimIndent()
         ).use { statement ->
@@ -78,7 +109,9 @@ class PostgreSqlActivationRedemptionStore(
             statement.setString(2, attemptId)
             statement.setString(3, subject)
             statement.setString(4, claims.productId)
-            statement.setTimestamp(5, java.sql.Timestamp.from(now))
+            statement.setString(5, installationId)
+            statement.setString(6, deviceKeyFingerprint)
+            statement.setTimestamp(7, java.sql.Timestamp.from(now))
             return statement.executeUpdate() == 1
         }
     }
@@ -86,11 +119,19 @@ class PostgreSqlActivationRedemptionStore(
     private fun existingResult(
         connection: Connection,
         claims: ActivationCodeClaims,
-        attemptId: String
+        attemptId: String,
+        installationId: String,
+        deviceKeyFingerprint: String
     ): ActivationRedemptionStoreResult {
         connection.prepareStatement(
             """
-            SELECT attempt_id, subject, product_id, redeemed_at
+            SELECT
+                attempt_id,
+                subject,
+                product_id,
+                installation_id,
+                device_key_fingerprint,
+                redeemed_at
             FROM licensing_activation_redemption
             WHERE code_id = ?
             """.trimIndent()
@@ -100,6 +141,12 @@ class PostgreSqlActivationRedemptionStore(
                 if (!result.next()) return ActivationRedemptionStoreResult.Failed
                 if (result.getString("attempt_id") != attemptId) {
                     return ActivationRedemptionStoreResult.Exhausted
+                }
+                if (
+                    result.getString("installation_id") != installationId ||
+                    result.getString("device_key_fingerprint") != deviceKeyFingerprint
+                ) {
+                    return ActivationRedemptionStoreResult.DeviceLimitReached
                 }
                 val subject = result.getString("subject")
                     ?: return ActivationRedemptionStoreResult.Failed
@@ -111,9 +158,43 @@ class PostgreSqlActivationRedemptionStore(
                 val redeemedAt = result.getTimestamp("redeemed_at")?.toInstant()
                     ?: return ActivationRedemptionStoreResult.Failed
                 return ActivationRedemptionStoreResult.Replay(
-                    record(claims, attemptId, subject, redeemedAt)
+                    record(
+                        claims = claims,
+                        attemptId = attemptId,
+                        subject = subject,
+                        installationId = installationId,
+                        deviceKeyFingerprint = deviceKeyFingerprint,
+                        redeemedAt = redeemedAt
+                    )
                 )
             }
+        }
+    }
+
+    private fun insertDeviceBinding(
+        connection: Connection,
+        subject: String,
+        installationId: String,
+        deviceKeyFingerprint: String,
+        now: Instant
+    ) {
+        connection.prepareStatement(
+            """
+            INSERT INTO licensing_device_binding (
+                subject,
+                installation_id,
+                device_key_fingerprint,
+                status,
+                bound_at,
+                revoked_at
+            ) VALUES (?, ?, ?, 'ACTIVE', ?, NULL)
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, subject)
+            statement.setString(2, installationId)
+            statement.setString(3, deviceKeyFingerprint)
+            statement.setTimestamp(4, java.sql.Timestamp.from(now))
+            statement.executeUpdate()
         }
     }
 
@@ -123,8 +204,30 @@ class PostgreSqlActivationRedemptionStore(
         subject: String,
         now: Instant
     ) {
-        val expiresAt = policy.entitlementLifetime?.let(now::plus)
-        val offlineLeaseUntil = policy.offlineLeaseDuration
+        val requestedLifetime = claims.entitlementLifetimeSeconds
+            ?.let(Duration::ofSeconds)
+        val requestedOffline = claims.offlineLeaseSeconds
+            ?.let(Duration::ofSeconds)
+
+        if (
+            policy.entitlementLifetime != null &&
+            (
+                requestedLifetime == null ||
+                    requestedLifetime > policy.entitlementLifetime
+                )
+        ) {
+            error("activation entitlement lifetime exceeds server policy")
+        }
+        if (
+            policy.offlineLeaseDuration != null &&
+            requestedOffline != null &&
+            requestedOffline > policy.offlineLeaseDuration
+        ) {
+            error("activation offline lease exceeds server policy")
+        }
+
+        val expiresAt = requestedLifetime?.let(now::plus)
+        val offlineLeaseUntil = requestedOffline
             ?.let(now::plus)
             ?.let { lease ->
                 if (expiresAt != null && lease.isAfter(expiresAt)) expiresAt else lease
@@ -166,6 +269,8 @@ class PostgreSqlActivationRedemptionStore(
         claims: ActivationCodeClaims,
         attemptId: String,
         subject: String,
+        installationId: String,
+        deviceKeyFingerprint: String,
         redeemedAt: Instant
     ) = ActivationRedemptionRecord(
         codeId = claims.codeId,
@@ -173,6 +278,8 @@ class PostgreSqlActivationRedemptionStore(
         subject = subject,
         productId = claims.productId,
         features = claims.features,
+        installationId = installationId,
+        deviceKeyFingerprint = deviceKeyFingerprint,
         redeemedAt = redeemedAt
     )
 }
@@ -192,7 +299,31 @@ object PostgreSqlActivationRedemptionSchema {
                             CHECK (length(btrim(subject)) > 0),
                         product_id TEXT NOT NULL
                             CHECK (length(btrim(product_id)) > 0),
+                        installation_id TEXT NOT NULL
+                            CHECK (length(btrim(installation_id)) > 0),
+                        device_key_fingerprint TEXT NOT NULL
+                            CHECK (length(btrim(device_key_fingerprint)) > 0),
                         redeemed_at TIMESTAMPTZ NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS licensing_device_binding (
+                        subject TEXT PRIMARY KEY
+                            CHECK (length(btrim(subject)) > 0),
+                        installation_id TEXT NOT NULL
+                            CHECK (length(btrim(installation_id)) > 0),
+                        device_key_fingerprint TEXT NOT NULL
+                            CHECK (length(btrim(device_key_fingerprint)) > 0),
+                        status TEXT NOT NULL
+                            CHECK (status IN ('ACTIVE', 'REVOKED')),
+                        bound_at TIMESTAMPTZ NOT NULL,
+                        revoked_at TIMESTAMPTZ,
+                        CHECK (
+                            (status = 'ACTIVE' AND revoked_at IS NULL) OR
+                            (status = 'REVOKED' AND revoked_at IS NOT NULL)
+                        )
                     )
                     """.trimIndent()
                 )
