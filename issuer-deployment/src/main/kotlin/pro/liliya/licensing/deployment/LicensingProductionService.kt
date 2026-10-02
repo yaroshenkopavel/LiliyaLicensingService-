@@ -9,8 +9,9 @@ import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
-import pro.liliya.licensing.http.AuthenticatedActivationRedemptionHttpEndpoint
+import pro.liliya.licensing.http.ActivationRedemptionHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
+import pro.liliya.licensing.http.LicensingIssuerProcessor
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpEndpoint
 import pro.liliya.licensing.http.LicensingHttpRouter
@@ -366,17 +367,17 @@ class LicensingProductionService private constructor(
                 )
             )
 
-            val endpoint = AuthenticatedLicenseHttpEndpoint(
-                delegate = LicenseHttpEndpoint(
-                    LicensingIssuerCoordinator(
-                        validator = LicenseRequestValidator(
-                            supportedVersion = LicenseProtocolVersion(1)
-                        ),
-                        source = entitlementSource,
-                        transactions = transactions,
-                        signing = LicenseSigningComposition(signer)
-                    )
+            val issuerCoordinator = LicensingIssuerCoordinator(
+                validator = LicenseRequestValidator(
+                    supportedVersion = LicenseProtocolVersion(1)
                 ),
+                source = entitlementSource,
+                transactions = transactions,
+                signing = LicenseSigningComposition(signer)
+            )
+
+            val endpoint = AuthenticatedLicenseHttpEndpoint(
+                delegate = LicenseHttpEndpoint(issuerCoordinator),
                 authentication = authentication
             )
             val serviceStateEndpoint = AuthenticatedServiceStateHttpEndpoint(
@@ -411,13 +412,13 @@ class LicensingProductionService private constructor(
                             config.offlineLeaseDuration?.takeUnless { it.isZero }
                     )
                 )
-                AuthenticatedActivationRedemptionHttpEndpoint(
+                ActivationRedemptionHttpEndpoint(
                     service = ActivationRedemptionService(
                         publicKeys = publicKeys,
                         store = store,
                         subjectGenerator = SecureRandomActivationSubjectGenerator()
                     ),
-                    authentication = authentication
+                    issuer = LicensingIssuerProcessor(issuerCoordinator::process)
                 )
             }
 

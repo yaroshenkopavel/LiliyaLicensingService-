@@ -110,13 +110,13 @@ class AuthenticatedServiceStateHttpEndpoint(
 class LicensingHttpRouter(
     private val entitlement: AuthenticatedLicenseHttpEndpoint,
     private val serviceState: AuthenticatedServiceStateHttpEndpoint,
-    private val activation: AuthenticatedActivationRedemptionHttpEndpoint? = null
+    private val activation: ActivationRedemptionHttpEndpoint? = null
 ) {
     fun handle(request: LicenseHttpRequest): LicenseHttpResponse =
         when (request.path) {
             LicenseHttpEndpoint.PATH -> entitlement.handle(request)
             AuthenticatedServiceStateHttpEndpoint.PATH -> serviceState.handle(request)
-            AuthenticatedActivationRedemptionHttpEndpoint.PATH ->
+            ActivationRedemptionHttpEndpoint.PATH ->
                 activation?.handle(request)
                     ?: LicenseHttpResponse(
                         status = 404,
