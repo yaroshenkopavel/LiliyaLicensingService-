@@ -205,29 +205,58 @@ data class DeviceRebindPostgreSqlRuntimeReadinessDependency(
                 connection.prepareStatement(
                     """
                     SELECT
-                        has_table_privilege(current_user, 'licensing_entitlement', 'SELECT'),
-                        has_table_privilege(current_user, 'licensing_entitlement', 'INSERT'),
-                        has_table_privilege(current_user, 'licensing_entitlement', 'UPDATE'),
-                        has_table_privilege(current_user, 'licensing_entitlement', 'DELETE'),
-                        has_table_privilege(current_user, 'licensing_device_binding', 'SELECT'),
-                        has_table_privilege(current_user, 'licensing_device_binding', 'INSERT'),
-                        has_table_privilege(current_user, 'licensing_device_binding', 'UPDATE'),
-                        has_table_privilege(current_user, 'licensing_device_binding', 'DELETE'),
-                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'SELECT'),
-                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'INSERT'),
-                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'UPDATE'),
-                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'DELETE')
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'subject', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'product_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'revoked_at', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'device_binding_required', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'device_binding_epoch', 'SELECT') AND
+                        NOT has_column_privilege(current_user, 'licensing_entitlement', 'features', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'subject', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'installation_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'device_key_fingerprint', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'status', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'binding_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'subject', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'installation_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'device_key_fingerprint', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'status', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'bound_at', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'revoked_at', 'INSERT') AND
+                        NOT has_column_privilege(current_user, 'licensing_device_binding', 'status', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'code_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'attempt_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'subject', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'product_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_binding_epoch', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'installation_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_key_fingerprint', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'redeemed_at', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'code_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'attempt_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'subject', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'product_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_binding_epoch', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'installation_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_key_fingerprint', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'redeemed_at', 'INSERT') AND
+                        NOT has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'attempt_id', 'UPDATE')
                     """.trimIndent()
                 ).use { statement ->
                     statement.executeQuery().use { result ->
                         if (!result.next()) error("device rebind PostgreSQL privilege row missing")
-                        val expected = listOf(
-                            true, false, false, false,
-                            true, true, false, false,
-                            true, true, false, false
-                        )
-                        val actual = (1..12).map(result::getBoolean)
-                        check(actual == expected) {
+                        check(result.getBoolean(1)) {
                             "device rebind PostgreSQL writer privileges are not minimal"
                         }
                     }
