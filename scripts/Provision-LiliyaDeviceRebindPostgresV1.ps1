@@ -116,31 +116,73 @@ try {
         "REVOKE ALL ON TABLE licensing_entitlement FROM liliya_device_rebind_writer; " +
         "REVOKE ALL ON TABLE licensing_device_binding FROM liliya_device_rebind_writer; " +
         "REVOKE ALL ON TABLE licensing_device_rebind_redemption FROM liliya_device_rebind_writer; " +
-        "GRANT SELECT ON TABLE licensing_entitlement TO liliya_device_rebind_writer; " +
-        "GRANT SELECT, INSERT ON TABLE licensing_device_binding TO liliya_device_rebind_writer; " +
-        "GRANT SELECT, INSERT ON TABLE licensing_device_rebind_redemption TO liliya_device_rebind_writer;"
+        "GRANT SELECT (subject, product_id, revoked_at, device_binding_required, device_binding_epoch) " +
+        "ON TABLE licensing_entitlement TO liliya_device_rebind_writer; " +
+        "GRANT SELECT (subject, installation_id, device_key_fingerprint, status) " +
+        "ON TABLE licensing_device_binding TO liliya_device_rebind_writer; " +
+        "GRANT INSERT (binding_id, subject, installation_id, device_key_fingerprint, status, bound_at, revoked_at) " +
+        "ON TABLE licensing_device_binding TO liliya_device_rebind_writer; " +
+        "GRANT SELECT (code_id, attempt_id, subject, product_id, device_binding_epoch, installation_id, device_key_fingerprint, redeemed_at) " +
+        "ON TABLE licensing_device_rebind_redemption TO liliya_device_rebind_writer; " +
+        "GRANT INSERT (code_id, attempt_id, subject, product_id, device_binding_epoch, installation_id, device_key_fingerprint, redeemed_at) " +
+        "ON TABLE licensing_device_rebind_redemption TO liliya_device_rebind_writer;"
     $null = Invoke-AdminSql -Credential $adminCredential -Sql $grantSql
 
     $env:PGPASSWORD = $writerCredential
     $verifySql =
         "SELECT " +
-        "has_table_privilege(current_user,'licensing_entitlement','SELECT')," +
-        "has_table_privilege(current_user,'licensing_entitlement','INSERT')," +
-        "has_table_privilege(current_user,'licensing_entitlement','UPDATE')," +
-        "has_table_privilege(current_user,'licensing_entitlement','DELETE')," +
-        "has_table_privilege(current_user,'licensing_device_binding','SELECT')," +
-        "has_table_privilege(current_user,'licensing_device_binding','INSERT')," +
-        "has_table_privilege(current_user,'licensing_device_binding','UPDATE')," +
-        "has_table_privilege(current_user,'licensing_device_binding','DELETE')," +
-        "has_table_privilege(current_user,'licensing_device_rebind_redemption','SELECT')," +
-        "has_table_privilege(current_user,'licensing_device_rebind_redemption','INSERT')," +
-        "has_table_privilege(current_user,'licensing_device_rebind_redemption','UPDATE')," +
-        "has_table_privilege(current_user,'licensing_device_rebind_redemption','DELETE');"
+        "NOT has_table_privilege(current_user,'licensing_entitlement','SELECT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_entitlement','INSERT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_entitlement','UPDATE') AND " +
+        "NOT has_table_privilege(current_user,'licensing_entitlement','DELETE') AND " +
+        "has_column_privilege(current_user,'licensing_entitlement','subject','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_entitlement','product_id','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_entitlement','revoked_at','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_entitlement','device_binding_required','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_entitlement','device_binding_epoch','SELECT') AND " +
+        "NOT has_column_privilege(current_user,'licensing_entitlement','features','SELECT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_binding','SELECT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_binding','INSERT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_binding','UPDATE') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_binding','DELETE') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','subject','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','installation_id','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','device_key_fingerprint','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','status','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','binding_id','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','subject','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','installation_id','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','device_key_fingerprint','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','status','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','bound_at','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_binding','revoked_at','INSERT') AND " +
+        "NOT has_column_privilege(current_user,'licensing_device_binding','status','UPDATE') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','SELECT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','INSERT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','UPDATE') AND " +
+        "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','DELETE') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','code_id','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','attempt_id','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','subject','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','product_id','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','device_binding_epoch','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','installation_id','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','device_key_fingerprint','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','redeemed_at','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','code_id','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','attempt_id','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','subject','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','product_id','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','device_binding_epoch','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','installation_id','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','device_key_fingerprint','INSERT') AND " +
+        "has_column_privilege(current_user,'licensing_device_rebind_redemption','redeemed_at','INSERT') AND " +
+        "NOT has_column_privilege(current_user,'licensing_device_rebind_redemption','attempt_id','UPDATE');"
     $verify = & $Psql -h 127.0.0.1 -p 5432 -U $WriterRole -d liliya_licensing -t -A -c $verifySql
     if ($LASTEXITCODE -ne 0) {
         throw "Device rebind writer verification failed."
     }
-    if (([string]$verify).Trim() -ne "t|f|f|f|t|t|f|f|t|t|f|f") {
+    if (([string]$verify).Trim() -ne "t") {
         throw "Device rebind writer privileges are not minimal."
     }
 
