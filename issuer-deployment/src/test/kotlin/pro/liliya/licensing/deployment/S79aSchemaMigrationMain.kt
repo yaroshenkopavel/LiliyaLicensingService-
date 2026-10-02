@@ -23,6 +23,7 @@ fun main() {
         "LICENSING_S7_9A_SCHEMA_EVIDENCE=" +
             "{\"schemaInitializedBySeparateAdminHelper\":true," +
             "\"entitlementSchemaInitialized\":true," +
+            "\"activationRedemptionSchemaInitialized\":true," +
             "\"entitlementRowsCreated\":false}"
     )
 }
