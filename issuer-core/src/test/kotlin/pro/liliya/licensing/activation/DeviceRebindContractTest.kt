@@ -80,6 +80,43 @@ class DeviceRebindContractTest {
     }
 
     @Test
+    fun tampered_code_is_rejected_before_store() {
+        val store = FakeStore()
+        val code = signedCode()
+        val replacement = if (code.last() == 'A') 'B' else 'A'
+        val tampered = code.dropLast(1) + replacement
+
+        val result = service(store).rebind(
+            DeviceRebindRequest(
+                rebindCode = tampered,
+                attemptId = "attempt-1",
+                installationId = "installation-B",
+                deviceKeyFingerprint = "sha256:device-B"
+            ),
+            Instant.parse("2026-10-02T18:00:00Z")
+        )
+
+        assertIs<DeviceRebindResult.InvalidCode>(result)
+        assertEquals(0, store.calls)
+    }
+
+    @Test
+    fun unavailable_or_revoked_entitlement_is_rejected() {
+        val store = FakeStore(entitlementUnavailable = true)
+        val result = service(store).rebind(
+            DeviceRebindRequest(
+                rebindCode = signedCode(),
+                attemptId = "attempt-1",
+                installationId = "installation-B",
+                deviceKeyFingerprint = "sha256:device-B"
+            ),
+            Instant.parse("2026-10-02T18:00:00Z")
+        )
+
+        assertIs<DeviceRebindResult.EntitlementUnavailable>(result)
+    }
+
+    @Test
     fun expired_code_is_rejected_before_store() {
         val store = FakeStore()
         val result = service(store).rebind(
@@ -129,7 +166,8 @@ class DeviceRebindContractTest {
     }
 
     private class FakeStore(
-        private val activeDeviceExists: Boolean = false
+        private val activeDeviceExists: Boolean = false,
+        private val entitlementUnavailable: Boolean = false
     ) : DeviceRebindStore {
         var calls = 0
         private var record: DeviceRebindRecord? = null
@@ -143,6 +181,9 @@ class DeviceRebindContractTest {
         ): DeviceRebindStoreResult {
             calls += 1
             if (activeDeviceExists) return DeviceRebindStoreResult.ActiveDeviceExists
+            if (entitlementUnavailable) {
+                return DeviceRebindStoreResult.EntitlementUnavailable
+            }
 
             val existing = record
             if (existing != null) {

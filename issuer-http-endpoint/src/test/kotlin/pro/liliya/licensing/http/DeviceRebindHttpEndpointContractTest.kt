@@ -56,6 +56,24 @@ class DeviceRebindHttpEndpointContractTest {
     }
 
     @Test
+    fun unavailable_entitlement_is_rejected_without_license_issue() {
+        val endpoint = endpoint(
+            store = FakeStore(entitlementUnavailable = true),
+            issuer = LicensingIssuerProcessor {
+                error("issuer must not run when entitlement is unavailable")
+            }
+        )
+
+        val response = endpoint.handle(request(code(), "attempt-1"))
+
+        assertEquals(409, response.status)
+        assertTrue(
+            response.body.toString(Charsets.UTF_8)
+                .contains("\"reason\":\"ENTITLEMENT_UNAVAILABLE\"")
+        )
+    }
+
+    @Test
     fun active_device_exists_is_rejected_without_license_issue() {
         val endpoint = endpoint(
             store = FakeStore(activeDeviceExists = true),
@@ -134,7 +152,8 @@ class DeviceRebindHttpEndpointContractTest {
     )
 
     private class FakeStore(
-        private val activeDeviceExists: Boolean = false
+        private val activeDeviceExists: Boolean = false,
+        private val entitlementUnavailable: Boolean = false
     ) : DeviceRebindStore {
         private var record: DeviceRebindRecord? = null
 
@@ -147,6 +166,9 @@ class DeviceRebindHttpEndpointContractTest {
         ): DeviceRebindStoreResult {
             if (activeDeviceExists) {
                 return DeviceRebindStoreResult.ActiveDeviceExists
+            }
+            if (entitlementUnavailable) {
+                return DeviceRebindStoreResult.EntitlementUnavailable
             }
 
             val existing = record
