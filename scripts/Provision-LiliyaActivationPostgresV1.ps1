@@ -119,7 +119,11 @@ try {
     }
     $null = Invoke-AdminSql -Credential $adminCredential -Sql $roleSql
 
-    $grantSql = "GRANT USAGE ON SCHEMA public TO liliya_activation_writer; " +
+    $grantSql = "REVOKE CREATE ON SCHEMA public FROM PUBLIC; " +
+        "REVOKE CREATE ON SCHEMA public FROM liliya_licensing; " +
+        "GRANT USAGE ON SCHEMA public TO liliya_licensing; " +
+        "GRANT USAGE ON SCHEMA public TO liliya_activation_writer; " +
+        "REVOKE CREATE ON SCHEMA public FROM liliya_activation_writer; " +
         "REVOKE ALL ON TABLE licensing_entitlement FROM liliya_activation_writer; " +
         "REVOKE ALL ON TABLE licensing_activation_redemption FROM liliya_activation_writer; " +
         "REVOKE ALL ON TABLE licensing_device_binding FROM liliya_activation_writer; " +
@@ -139,6 +143,8 @@ try {
 
     $env:PGPASSWORD = $writerCredential
     $verifySql = "SELECT " +
+        "has_schema_privilege(current_user,'public','USAGE') AND " +
+        "NOT has_schema_privilege(current_user,'public','CREATE') AND " +
         "NOT has_table_privilege(current_user,'licensing_entitlement','INSERT') AND " +
         "NOT has_table_privilege(current_user,'licensing_entitlement','SELECT') AND " +
         "NOT has_table_privilege(current_user,'licensing_entitlement','UPDATE') AND " +
@@ -200,6 +206,8 @@ try {
     }
 
     $runtimeVerifySql = "SELECT " +
+        "has_schema_privilege(current_user,'public','USAGE') AND " +
+        "NOT has_schema_privilege(current_user,'public','CREATE') AND " +
         "NOT has_table_privilege(current_user,'licensing_device_binding','SELECT') AND " +
         "NOT has_table_privilege(current_user,'licensing_device_binding','INSERT') AND " +
         "NOT has_table_privilege(current_user,'licensing_device_binding','UPDATE') AND " +
