@@ -63,6 +63,26 @@ fun main() {
         }
     }
 
+    val activationConfig = when (
+        val result = ActivationDeploymentConfigLoader(source).load()
+    ) {
+        ActivationDeploymentConfigLoadResult.Disabled -> null
+        is ActivationDeploymentConfigLoadResult.Loaded -> result.config
+        is ActivationDeploymentConfigLoadResult.Rejected -> {
+            sink.publish(
+                LicensingOperationalEvent(
+                    environment = config.environment.toOperationalEnvironment(),
+                    component = LicensingOperationalComponent.DEPLOYMENT,
+                    code = LicensingOperationalEventCode.BOOTSTRAP_REJECTED,
+                    reason = LicensingOperationalReasonCode.INVALID_CONFIGURATION
+                )
+            )
+            material.close()
+            config.close()
+            exitProcess(2)
+        }
+    }
+
     val entitlementSource = when (
         val result = ServiceLoaderDeploymentEntitlementSourceProviderLoader().load()
     ) {
@@ -86,7 +106,8 @@ fun main() {
         LicensingProductionService.create(
             deploymentConfig = config,
             runtimeMaterial = material,
-            entitlementSource = entitlementSource
+            entitlementSource = entitlementSource,
+            activationConfig = activationConfig
         )
     } catch (_: Exception) {
         sink.publish(

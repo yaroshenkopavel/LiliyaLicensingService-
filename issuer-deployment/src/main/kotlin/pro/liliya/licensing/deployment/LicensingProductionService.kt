@@ -2,11 +2,14 @@ package pro.liliya.licensing.deployment
 
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
+import pro.liliya.licensing.activation.ActivationRedemptionService
+import pro.liliya.licensing.activation.SecureRandomActivationSubjectGenerator
 import org.postgresql.ds.PGSimpleDataSource
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
+import pro.liliya.licensing.http.AuthenticatedActivationRedemptionHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpEndpoint
@@ -17,6 +20,7 @@ import pro.liliya.licensing.https.ProductionHttpsListener
 import pro.liliya.licensing.https.TlsPassword
 import pro.liliya.licensing.issuer.EntitlementSourcePort
 import pro.liliya.licensing.issuer.LicensingIssuerCoordinator
+import pro.liliya.licensing.openbao.OpenBaoTransitActivationCodePublicKeyResolver
 import pro.liliya.licensing.openbao.OpenBaoTransitClient
 import pro.liliya.licensing.openbao.OpenBaoTransitDescribeResult
 import pro.liliya.licensing.openbao.OpenBaoTransitEndpoint
@@ -25,6 +29,8 @@ import pro.liliya.licensing.openbao.OpenBaoTransitKeyBinding
 import pro.liliya.licensing.openbao.OpenBaoTransitLicenseEnvelopeSigner
 import pro.liliya.licensing.openbao.OpenBaoTransitProductionSigningProfile
 import pro.liliya.licensing.openbao.OpenBaoTransitServiceStateProofSigner
+import pro.liliya.licensing.postgres.ActivationEntitlementPolicy
+import pro.liliya.licensing.postgres.PostgreSqlActivationRedemptionStore
 import pro.liliya.licensing.postgres.PostgreSqlDecisionTransactionPort
 import pro.liliya.licensing.protocol.LicenseProtocolVersion
 import pro.liliya.licensing.protocol.LicenseRequestValidator
@@ -133,7 +139,45 @@ class PostgreSqlRuntimeReadinessDependency(
         "PostgreSqlRuntimeReadinessDependency(dataSource=<redacted>)"
 }
 
-data class OpenBaoRuntimeKeyRequirement(
+data class ActivationPostgreSqlRuntimeReadinessDependency(
+    private val dataSource: PGSimpleDataSource
+) : LicensingRuntimeDependency {
+    override val kind: LicensingRuntimeDependencyKind =
+        LicensingRuntimeDependencyKind.POSTGRESQL
+
+    override fun prepare(): LicensingRuntimeDependencyResult =
+        try {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    SELECT code_id, attempt_id, subject, product_id, redeemed_at
+                    FROM licensing_activation_redemption
+                    WHERE 1 = 0
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.executeQuery().use { it.metaData.columnCount }
+                }
+                connection.prepareStatement(
+                    """
+                    SELECT subject, product_id
+                    FROM licensing_entitlement
+                    WHERE 1 = 0
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.executeQuery().use { it.metaData.columnCount }
+                }
+            }
+            LicensingRuntimeDependencyResult.Ready
+        } catch (_: Exception) {
+            LicensingRuntimeDependencyResult.Failed(
+                LicensingRuntimeFailure.POSTGRESQL_UNAVAILABLE
+            )
+        }
+
+    override fun close() = Unit
+}
+
+class OpenBaoRuntimeKeyRequirement(
     val keyName: String,
     val keyVersion: Int
 ) {
@@ -271,7 +315,8 @@ class LicensingProductionService private constructor(
         fun create(
             deploymentConfig: LicensingDeploymentConfig,
             runtimeMaterial: ProductionRuntimeMaterial,
-            entitlementSource: EntitlementSourcePort
+            entitlementSource: EntitlementSourcePort,
+            activationConfig: ActivationDeploymentConfig? = null
         ): LicensingProductionService {
             val dataSource = PGSimpleDataSource().apply {
                 setURL(deploymentConfig.postgresJdbcUrl)
@@ -338,9 +383,38 @@ class LicensingProductionService private constructor(
                 service = serviceStateService,
                 authentication = authentication
             )
+
+            val activationEndpoint = activationConfig?.let { config ->
+                val publicKeys = OpenBaoTransitActivationCodePublicKeyResolver.create(
+                    client = openBaoClient,
+                    keyId = config.logicalKeyId,
+                    keyName = config.openBaoKeyName,
+                    keyVersion = config.openBaoKeyVersion
+                )
+                val store = PostgreSqlActivationRedemptionStore(
+                    dataSource = dataSource,
+                    policy = ActivationEntitlementPolicy(
+                        signingKeyId = deploymentConfig.openBaoKeyReference,
+                        entitlementLifetime =
+                            config.entitlementLifetime?.takeUnless { it.isZero },
+                        offlineLeaseDuration =
+                            config.offlineLeaseDuration?.takeUnless { it.isZero }
+                    )
+                )
+                AuthenticatedActivationRedemptionHttpEndpoint(
+                    service = ActivationRedemptionService(
+                        publicKeys = publicKeys,
+                        store = store,
+                        subjectGenerator = SecureRandomActivationSubjectGenerator()
+                    ),
+                    authentication = authentication
+                )
+            }
+
             val router = LicensingHttpRouter(
                 entitlement = endpoint,
-                serviceState = serviceStateEndpoint
+                serviceState = serviceStateEndpoint,
+                activation = activationEndpoint
             )
 
             val tlsPassword = run {
@@ -364,24 +438,45 @@ class LicensingProductionService private constructor(
                 readiness = { runtimeRef.get()?.isReady() == true }
             )
 
-            val runtime = LicensingProductionRuntime(
-                dependencies = listOf(
-                    PostgreSqlRuntimeReadinessDependency(dataSource),
+            val requiredOpenBaoKeys = buildList {
+                add(
+                    OpenBaoRuntimeKeyRequirement(
+                        keyName = runtimeMaterial.openBaoKeyName,
+                        keyVersion = runtimeMaterial.openBaoKeyVersion
+                    )
+                )
+                add(
+                    OpenBaoRuntimeKeyRequirement(
+                        keyName = runtimeMaterial.serviceStateOpenBaoKeyName,
+                        keyVersion = runtimeMaterial.serviceStateOpenBaoKeyVersion
+                    )
+                )
+                activationConfig?.let {
+                    add(
+                        OpenBaoRuntimeKeyRequirement(
+                            keyName = it.openBaoKeyName,
+                            keyVersion = it.openBaoKeyVersion
+                        )
+                    )
+                }
+            }
+
+            val dependencies = buildList<LicensingRuntimeDependency> {
+                add(PostgreSqlRuntimeReadinessDependency(dataSource))
+                activationConfig?.let {
+                    add(ActivationPostgreSqlRuntimeReadinessDependency(dataSource))
+                }
+                add(
                     OpenBaoRuntimeReadinessDependency(
                         client = openBaoClient,
-                        requiredKeys = listOf(
-                            OpenBaoRuntimeKeyRequirement(
-                                keyName = runtimeMaterial.openBaoKeyName,
-                                keyVersion = runtimeMaterial.openBaoKeyVersion
-                            ),
-                            OpenBaoRuntimeKeyRequirement(
-                                keyName = runtimeMaterial.serviceStateOpenBaoKeyName,
-                                keyVersion = runtimeMaterial.serviceStateOpenBaoKeyVersion
-                            )
-                        )
-                    ),
-                    RequestAuthenticationRuntimeReadinessDependency(authentication)
-                ),
+                        requiredKeys = requiredOpenBaoKeys
+                    )
+                )
+                add(RequestAuthenticationRuntimeReadinessDependency(authentication))
+            }
+
+            val runtime = LicensingProductionRuntime(
+                dependencies = dependencies,
                 listener = listener
             )
             runtimeRef.set(runtime)
