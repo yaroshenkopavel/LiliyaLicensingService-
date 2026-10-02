@@ -3,6 +3,7 @@ package pro.liliya.licensing.deployment
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import pro.liliya.licensing.activation.ActivationRedemptionService
+import pro.liliya.licensing.activation.DeviceRebindService
 import pro.liliya.licensing.activation.SecureRandomActivationSubjectGenerator
 import org.postgresql.ds.PGSimpleDataSource
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
@@ -10,6 +11,7 @@ import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
 import pro.liliya.licensing.http.ActivationRedemptionHttpEndpoint
+import pro.liliya.licensing.http.DeviceRebindHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
 import pro.liliya.licensing.http.LicensingIssuerProcessor
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
@@ -32,6 +34,7 @@ import pro.liliya.licensing.openbao.OpenBaoTransitProductionSigningProfile
 import pro.liliya.licensing.openbao.OpenBaoTransitServiceStateProofSigner
 import pro.liliya.licensing.postgres.ActivationEntitlementPolicy
 import pro.liliya.licensing.postgres.PostgreSqlActivationRedemptionStore
+import pro.liliya.licensing.postgres.PostgreSqlDeviceRebindStore
 import pro.liliya.licensing.postgres.PostgreSqlDecisionTransactionPort
 import pro.liliya.licensing.protocol.LicenseProtocolVersion
 import pro.liliya.licensing.protocol.LicenseRequestValidator
@@ -190,6 +193,56 @@ data class ActivationPostgreSqlRuntimeReadinessDependency(
     override fun close() = Unit
 }
 
+data class DeviceRebindPostgreSqlRuntimeReadinessDependency(
+    private val dataSource: PGSimpleDataSource
+) : LicensingRuntimeDependency {
+    override val kind: LicensingRuntimeDependencyKind =
+        LicensingRuntimeDependencyKind.POSTGRESQL
+
+    override fun prepare(): LicensingRuntimeDependencyResult =
+        try {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    SELECT
+                        has_table_privilege(current_user, 'licensing_entitlement', 'SELECT'),
+                        has_table_privilege(current_user, 'licensing_entitlement', 'INSERT'),
+                        has_table_privilege(current_user, 'licensing_entitlement', 'UPDATE'),
+                        has_table_privilege(current_user, 'licensing_entitlement', 'DELETE'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'SELECT'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'INSERT'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'UPDATE'),
+                        has_table_privilege(current_user, 'licensing_device_binding', 'DELETE'),
+                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'SELECT'),
+                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'INSERT'),
+                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'UPDATE'),
+                        has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'DELETE')
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.executeQuery().use { result ->
+                        if (!result.next()) error("device rebind PostgreSQL privilege row missing")
+                        val expected = listOf(
+                            true, false, false, false,
+                            true, true, false, false,
+                            true, true, false, false
+                        )
+                        val actual = (1..12).map(result::getBoolean)
+                        check(actual == expected) {
+                            "device rebind PostgreSQL writer privileges are not minimal"
+                        }
+                    }
+                }
+            }
+            LicensingRuntimeDependencyResult.Ready
+        } catch (_: Exception) {
+            LicensingRuntimeDependencyResult.Failed(
+                LicensingRuntimeFailure.POSTGRESQL_UNAVAILABLE
+            )
+        }
+
+    override fun close() = Unit
+}
+
 class OpenBaoRuntimeKeyRequirement(
     val keyName: String,
     val keyVersion: Int
@@ -329,8 +382,12 @@ class LicensingProductionService private constructor(
             deploymentConfig: LicensingDeploymentConfig,
             runtimeMaterial: ProductionRuntimeMaterial,
             entitlementSource: EntitlementSourcePort,
-            activationConfig: ActivationDeploymentConfig? = null
+            activationConfig: ActivationDeploymentConfig? = null,
+            deviceRebindConfig: DeviceRebindDeploymentConfig? = null
         ): LicensingProductionService {
+            require(deviceRebindConfig == null || activationConfig != null) {
+                "device rebind requires activation signing configuration"
+            }
             val dataSource = PGSimpleDataSource().apply {
                 setURL(deploymentConfig.postgresJdbcUrl)
                 user = deploymentConfig.postgresUsername
@@ -434,10 +491,40 @@ class LicensingProductionService private constructor(
                 )
             }
 
+            val deviceRebindDataSource = deviceRebindConfig?.let { config ->
+                PGSimpleDataSource().apply {
+                    setURL(deploymentConfig.postgresJdbcUrl)
+                    user = config.writerUsername
+                    config.writerCredential.useChars { chars ->
+                        password = chars.concatToString()
+                    }
+                }
+            }
+
+            val deviceRebindEndpoint = deviceRebindConfig?.let {
+                val activation = requireNotNull(activationConfig)
+                val publicKeys = OpenBaoTransitActivationCodePublicKeyResolver.create(
+                    client = openBaoClient,
+                    keyId = activation.logicalKeyId,
+                    keyName = activation.openBaoKeyName,
+                    keyVersion = activation.openBaoKeyVersion
+                )
+                DeviceRebindHttpEndpoint(
+                    service = DeviceRebindService(
+                        publicKeys = publicKeys,
+                        store = PostgreSqlDeviceRebindStore(
+                            requireNotNull(deviceRebindDataSource)
+                        )
+                    ),
+                    issuer = LicensingIssuerProcessor(issuerCoordinator::process)
+                )
+            }
+
             val router = LicensingHttpRouter(
                 entitlement = endpoint,
                 serviceState = serviceStateEndpoint,
-                activation = activationEndpoint
+                activation = activationEndpoint,
+                deviceRebind = deviceRebindEndpoint
             )
 
             val tlsPassword = run {
@@ -488,6 +575,9 @@ class LicensingProductionService private constructor(
                 add(PostgreSqlRuntimeReadinessDependency(dataSource))
                 activationDataSource?.let {
                     add(ActivationPostgreSqlRuntimeReadinessDependency(it))
+                }
+                deviceRebindDataSource?.let {
+                    add(DeviceRebindPostgreSqlRuntimeReadinessDependency(it))
                 }
                 add(
                     OpenBaoRuntimeReadinessDependency(

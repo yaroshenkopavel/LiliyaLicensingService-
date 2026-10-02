@@ -83,6 +83,27 @@ fun main() {
         }
     }
 
+    val deviceRebindConfig = when (
+        val result = DeviceRebindDeploymentConfigLoader(source).load()
+    ) {
+        DeviceRebindDeploymentConfigLoadResult.Disabled -> null
+        is DeviceRebindDeploymentConfigLoadResult.Loaded -> result.config
+        is DeviceRebindDeploymentConfigLoadResult.Rejected -> {
+            sink.publish(
+                LicensingOperationalEvent(
+                    environment = config.environment.toOperationalEnvironment(),
+                    component = LicensingOperationalComponent.DEPLOYMENT,
+                    code = LicensingOperationalEventCode.BOOTSTRAP_REJECTED,
+                    reason = LicensingOperationalReasonCode.INVALID_CONFIGURATION
+                )
+            )
+            activationConfig?.close()
+            material.close()
+            config.close()
+            exitProcess(2)
+        }
+    }
+
     val entitlementSource = when (
         val result = ServiceLoaderDeploymentEntitlementSourceProviderLoader().load()
     ) {
@@ -96,6 +117,7 @@ fun main() {
                     reason = LicensingOperationalReasonCode.ENTITLEMENT_SOURCE_UNAVAILABLE
                 )
             )
+            deviceRebindConfig?.close()
             activationConfig?.close()
             material.close()
             config.close()
@@ -108,8 +130,10 @@ fun main() {
             deploymentConfig = config,
             runtimeMaterial = material,
             entitlementSource = entitlementSource,
-            activationConfig = activationConfig
+            activationConfig = activationConfig,
+            deviceRebindConfig = deviceRebindConfig
         ).also {
+            deviceRebindConfig?.close()
             activationConfig?.close()
         }
     } catch (_: Exception) {
@@ -121,6 +145,7 @@ fun main() {
                 reason = LicensingOperationalReasonCode.INTERNAL_FAILURE
             )
         )
+        deviceRebindConfig?.close()
         activationConfig?.close()
         material.close()
         config.close()
