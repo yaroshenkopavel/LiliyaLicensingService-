@@ -57,27 +57,41 @@ $secretContainers = @(
 $containersOk = ($secretContainers | Where-Object { -not (Test-Path $_) }).Count -eq 0
 Add-Check "secret-containers-present" $containersOk "presence only; contents are never read"
 
-$approvalFlags = @(
-    $manifest.transport.endpointApproved,
-    $manifest.licenseRequest.protocolVersionApproved,
-    $manifest.licenseRequest.operationApproved,
-    $manifest.licenseRequest.productIdApproved,
-    $manifest.licenseRequest.subjectReferencePolicyApproved,
-    $manifest.licenseRequest.enrollmentPolicyApproved,
-    $manifest.trust.licensePublicKeyApproved,
-    $manifest.ownersAndPolicies.productAuthProvisioningOwnerApproved,
-    $manifest.ownersAndPolicies.authorityOwnerApproved,
-    $manifest.ownersAndPolicies.admissionOwnerApproved,
-    $manifest.ownersAndPolicies.keyChoicePolicyApproved,
-    $manifest.ownersAndPolicies.protectedModelBudgetsApproved,
-    $manifest.ownersAndPolicies.stagingOwnerApproved,
-    $manifest.ownersAndPolicies.preparedInputOwnersApproved,
-    $manifest.ownersAndPolicies.semanticDirectoryNameApproved,
-    $manifest.ownersAndPolicies.cognitiveStorageDirectoryNameApproved,
-    $manifest.ownersAndPolicies.observabilityOwnerApproved
+$licensingApprovals = [ordered]@{
+    endpoint = $manifest.transport.endpointApproved
+    productId = $manifest.licenseRequest.productIdApproved
+    subjectReferencePolicy = $manifest.licenseRequest.subjectReferencePolicyApproved
+    enrollmentPolicy = $manifest.licenseRequest.enrollmentPolicyApproved
+    licensePublicKey = $manifest.trust.licensePublicKeyApproved
+    entitlementPolicy = $manifest.entitlementCandidate.entitlementPolicyApproved
+}
+$missingLicensingApprovals = @(
+    $licensingApprovals.GetEnumerator() |
+        Where-Object { $_.Value -ne $true } |
+        ForEach-Object { $_.Key }
 )
-$approvalsOk = ($approvalFlags | Where-Object { $_ -ne $true }).Count -eq 0
-Add-Check "external-production-approvals" $approvalsOk "all required non-secret approvals must be explicit"
+$licensingApprovalsOk = $missingLicensingApprovals.Count -eq 0
+Add-Check "licensing-phase-approvals" $licensingApprovalsOk "only approvals required before activation/rebind live acceptance"
+
+$fullProductApprovals = [ordered]@{
+    protocolVersion = $manifest.licenseRequest.protocolVersionApproved
+    operation = $manifest.licenseRequest.operationApproved
+    productAuthProvisioningOwner = $manifest.ownersAndPolicies.productAuthProvisioningOwnerApproved
+    authorityOwner = $manifest.ownersAndPolicies.authorityOwnerApproved
+    admissionOwner = $manifest.ownersAndPolicies.admissionOwnerApproved
+    keyChoicePolicy = $manifest.ownersAndPolicies.keyChoicePolicyApproved
+    protectedModelBudgets = $manifest.ownersAndPolicies.protectedModelBudgetsApproved
+    stagingOwner = $manifest.ownersAndPolicies.stagingOwnerApproved
+    preparedInputOwners = $manifest.ownersAndPolicies.preparedInputOwnersApproved
+    semanticDirectoryName = $manifest.ownersAndPolicies.semanticDirectoryNameApproved
+    cognitiveStorageDirectoryName = $manifest.ownersAndPolicies.cognitiveStorageDirectoryNameApproved
+    observabilityOwner = $manifest.ownersAndPolicies.observabilityOwnerApproved
+}
+$missingFullProductApprovals = @(
+    $fullProductApprovals.GetEnumerator() |
+        Where-Object { $_.Value -ne $true } |
+        ForEach-Object { $_.Key }
+)
 $endpointCandidate = [string]$manifest.transport.endpointCandidate
 $endpointHttps = $endpointCandidate.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase)
 Add-Check "candidate-endpoint-https" $endpointHttps "candidate endpoint must be HTTPS"
@@ -94,12 +108,27 @@ $timeoutPolicyReady = ($null -ne $manifest.transport.connectTimeoutMillis -and
     [int]$manifest.transport.readTimeoutMillis -gt 0)
 Add-Check "timeout-policy-approved-values-present" $timeoutPolicyReady "positive finite connect/read timeouts required"
 
-$failed = @($results | Where-Object { -not $_.pass })
+$licensingFailed = @($results | Where-Object { -not $_.pass })
+$fullProductReady = (
+    $licensingFailed.Count -eq 0 -and
+    $missingFullProductApprovals.Count -eq 0
+)
 $summary = [PSCustomObject]@{
-    verdict = if ($failed.Count -eq 0) { "PREFLIGHT_READY" } else { "PREFLIGHT_BLOCKED" }
-    failedCount = $failed.Count
+    licensingVerdict = if ($licensingFailed.Count -eq 0) {
+        "LICENSING_PHASE_PREFLIGHT_READY"
+    } else {
+        "LICENSING_PHASE_PREFLIGHT_BLOCKED"
+    }
+    fullProductVerdict = if ($fullProductReady) {
+        "FULL_PRODUCT_PREFLIGHT_READY"
+    } else {
+        "FULL_PRODUCT_PREFLIGHT_DEFERRED"
+    }
+    failedCount = $licensingFailed.Count
+    missingLicensingApprovals = $missingLicensingApprovals
+    deferredFullProductApprovals = $missingFullProductApprovals
     checks = $results
 }
 $summary | ConvertTo-Json -Depth 6
-if ($failed.Count -gt 0) { exit 2 }
+if ($licensingFailed.Count -gt 0) { exit 2 }
 exit 0
