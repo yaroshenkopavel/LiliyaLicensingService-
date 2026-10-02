@@ -1,6 +1,7 @@
 package pro.liliya.licensing.deployment
 
 import org.postgresql.ds.PGSimpleDataSource
+import pro.liliya.licensing.postgres.PostgreSqlActivationRedemptionSchema
 import pro.liliya.licensing.postgres.PostgreSqlDecisionTransactionPort
 import pro.liliya.licensing.postgres.PostgreSqlEntitlementSchema
 
@@ -17,6 +18,7 @@ fun main() {
 
     PostgreSqlDecisionTransactionPort(dataSource).initializeSchema()
     PostgreSqlEntitlementSchema.initialize(dataSource)
+    PostgreSqlActivationRedemptionSchema.initialize(dataSource)
     println(
         "LICENSING_S7_9A_SCHEMA_EVIDENCE=" +
             "{\"schemaInitializedBySeparateAdminHelper\":true," +
