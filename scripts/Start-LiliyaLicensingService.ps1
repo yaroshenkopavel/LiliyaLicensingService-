@@ -140,7 +140,9 @@ function Test-ActivationAndRebindRoutes {
                 --data "{}" `
                 ("https://127.0.0.1:8443" + $path)
 
-        if ($LASTEXITCODE -ne 0 -or ([string]$status).Trim() -ne "400") {
+        $normalizedStatus = ([string]$status).Trim()
+        Write-Host ("ROUTE_READINESS=" + $path + "|" + $normalizedStatus)
+        if ($LASTEXITCODE -ne 0 -or $normalizedStatus -ne "400") {
             return $false
         }
     }

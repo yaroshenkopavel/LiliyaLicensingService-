@@ -12,8 +12,10 @@ import java.util.concurrent.Executors
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
+import pro.liliya.licensing.http.ActivationRedemptionHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
+import pro.liliya.licensing.http.DeviceRebindHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpMethod
 import pro.liliya.licensing.http.LicenseHttpRequest
@@ -154,6 +156,12 @@ class ProductionHttpsListener(
                 handleRequest(exchange)
             }
             createdServer.createContext(AuthenticatedServiceStateHttpEndpoint.PATH) { exchange ->
+                handleRequest(exchange)
+            }
+            createdServer.createContext(ActivationRedemptionHttpEndpoint.PATH) { exchange ->
+                handleRequest(exchange)
+            }
+            createdServer.createContext(DeviceRebindHttpEndpoint.PATH) { exchange ->
                 handleRequest(exchange)
             }
 

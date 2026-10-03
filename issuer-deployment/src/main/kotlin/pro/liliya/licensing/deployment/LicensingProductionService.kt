@@ -108,6 +108,51 @@ class SharedSecretRequestAuthentication(
         "SharedSecretRequestAuthentication(secret=<redacted>,closed=" + closed + ")"
 }
 
+class CompositePostgreSqlRuntimeReadinessDependency(
+    dependencies: List<LicensingRuntimeDependency>
+) : LicensingRuntimeDependency {
+    private val dependencies = dependencies.toList()
+
+    init {
+        require(this.dependencies.isNotEmpty()) {
+            "composite PostgreSQL readiness requires at least one dependency"
+        }
+        require(
+            this.dependencies.all {
+                it.kind == LicensingRuntimeDependencyKind.POSTGRESQL
+            }
+        ) {
+            "composite PostgreSQL readiness accepts PostgreSQL dependencies only"
+        }
+    }
+
+    override val kind: LicensingRuntimeDependencyKind =
+        LicensingRuntimeDependencyKind.POSTGRESQL
+
+    override fun prepare(): LicensingRuntimeDependencyResult {
+        for (dependency in dependencies) {
+            when (dependency.prepare()) {
+                LicensingRuntimeDependencyResult.Ready -> Unit
+                is LicensingRuntimeDependencyResult.Failed ->
+                    return LicensingRuntimeDependencyResult.Failed(
+                        LicensingRuntimeFailure.POSTGRESQL_UNAVAILABLE
+                    )
+            }
+        }
+        return LicensingRuntimeDependencyResult.Ready
+    }
+
+    override fun close() {
+        dependencies.asReversed().forEach { dependency ->
+            runCatching { dependency.close() }
+        }
+    }
+
+    override fun toString(): String =
+        "CompositePostgreSqlRuntimeReadinessDependency(count=" +
+            dependencies.size + ")"
+}
+
 class PostgreSqlRuntimeReadinessDependency(
     private val dataSource: PGSimpleDataSource
 ) : LicensingRuntimeDependency {
@@ -630,7 +675,7 @@ class LicensingProductionService private constructor(
                 }
             }
 
-            val dependencies = buildList<LicensingRuntimeDependency> {
+            val postgresDependencies = buildList<LicensingRuntimeDependency> {
                 add(PostgreSqlRuntimeReadinessDependency(dataSource))
                 activationDataSource?.let {
                     add(ActivationPostgreSqlRuntimeReadinessDependency(it))
@@ -638,6 +683,14 @@ class LicensingProductionService private constructor(
                 deviceRebindDataSource?.let {
                     add(DeviceRebindPostgreSqlRuntimeReadinessDependency(it))
                 }
+            }
+
+            val dependencies = buildList<LicensingRuntimeDependency> {
+                add(
+                    CompositePostgreSqlRuntimeReadinessDependency(
+                        postgresDependencies
+                    )
+                )
                 add(
                     OpenBaoRuntimeReadinessDependency(
                         client = openBaoClient,
