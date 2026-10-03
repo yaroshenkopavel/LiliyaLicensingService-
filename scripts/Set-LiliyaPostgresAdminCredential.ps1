@@ -32,18 +32,19 @@ try {
 
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $Psql
-    foreach ($arg in @(
-        "-h","127.0.0.1",
-        "-p","5432",
-        "-U","postgres",
-        "-d","liliya_licensing",
-        "-v","ON_ERROR_STOP=1",
-        "-t","-A",
-        "-c",
-        "SELECT current_user || '|' || rolsuper || '|' || rolcreaterole || '|' || rolcreatedb FROM pg_roles WHERE rolname = current_user;"
-    )) {
-        $psi.ArgumentList.Add($arg)
-    }
+    # Windows PowerShell 5.1 / .NET Framework does not expose
+    # ProcessStartInfo.ArgumentList. The command arguments below are all
+    # fixed non-secret literals; the password is supplied only through
+    # the child-process environment.
+    $psi.Arguments = @(
+        "-h 127.0.0.1",
+        "-p 5432",
+        "-U postgres",
+        "-d liliya_licensing",
+        "-v ON_ERROR_STOP=1",
+        "-t -A",
+        '-c "SELECT current_user || ''|'' || rolsuper || ''|'' || rolcreaterole || ''|'' || rolcreatedb FROM pg_roles WHERE rolname = current_user;"'
+    ) -join " "
 
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
