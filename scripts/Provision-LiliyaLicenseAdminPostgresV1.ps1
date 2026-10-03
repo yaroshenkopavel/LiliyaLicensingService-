@@ -106,6 +106,7 @@ try {
         "REVOKE ALL ON TABLE licensing_activation_redemption FROM liliya_license_admin; " +
         "REVOKE ALL ON TABLE licensing_device_binding FROM liliya_license_admin; " +
         "REVOKE ALL ON TABLE licensing_device_rebind_redemption FROM liliya_license_admin; " +
+        "REVOKE ALL ON TABLE licensing_decision_state FROM liliya_license_admin; " +
         "GRANT SELECT (subject, product_id, revoked_at, device_binding_required, device_binding_epoch, revocation_epoch) " +
         "ON TABLE licensing_entitlement TO liliya_license_admin; " +
         "GRANT UPDATE (revoked_at, revocation_epoch, device_binding_epoch) " +
@@ -113,7 +114,11 @@ try {
         "GRANT SELECT (subject, status, revoked_at) " +
         "ON TABLE licensing_device_binding TO liliya_license_admin; " +
         "GRANT UPDATE (status, revoked_at) " +
-        "ON TABLE licensing_device_binding TO liliya_license_admin;"
+        "ON TABLE licensing_device_binding TO liliya_license_admin; " +
+        "GRANT SELECT (subject, product_id, revocation_epoch) " +
+        "ON TABLE licensing_decision_state TO liliya_license_admin; " +
+        "GRANT UPDATE (revocation_epoch) " +
+        "ON TABLE licensing_decision_state TO liliya_license_admin;"
     $null = Invoke-AdminSql -Credential $adminCredential -Sql $grantSql
 
     $env:PGPASSWORD = $operatorCredential
@@ -152,7 +157,18 @@ try {
         "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','SELECT') AND " +
         "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','INSERT') AND " +
         "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','UPDATE') AND " +
-        "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','DELETE');"
+        "NOT has_table_privilege(current_user,'licensing_device_rebind_redemption','DELETE') AND " +
+        "NOT has_table_privilege(current_user,'licensing_decision_state','SELECT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_decision_state','UPDATE') AND " +
+        "NOT has_table_privilege(current_user,'licensing_decision_state','INSERT') AND " +
+        "NOT has_table_privilege(current_user,'licensing_decision_state','DELETE') AND " +
+        "has_column_privilege(current_user,'licensing_decision_state','subject','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_decision_state','product_id','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_decision_state','revocation_epoch','SELECT') AND " +
+        "has_column_privilege(current_user,'licensing_decision_state','revocation_epoch','UPDATE') AND " +
+        "NOT has_column_privilege(current_user,'licensing_decision_state','replay_sequence','UPDATE') AND " +
+        "NOT has_column_privilege(current_user,'licensing_decision_state','canonical_payload','UPDATE') AND " +
+        "NOT has_column_privilege(current_user,'licensing_decision_state','signature','UPDATE');"
 
     $verify = & $Psql -h 127.0.0.1 -p 5432 -U $OperatorRole -d liliya_licensing -t -A -c $verifySql
     if ($LASTEXITCODE -ne 0) {

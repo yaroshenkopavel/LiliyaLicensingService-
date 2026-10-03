@@ -38,6 +38,9 @@ fun main(args: Array<String>) {
             result.deviceBindingEpoch?.let {
                 println("DEVICE_BINDING_EPOCH=$it")
             }
+            result.revocationEpoch?.let {
+                println("REVOCATION_EPOCH=$it")
+            }
         }
         LicenseAdministrationResult.NotFound -> {
             println("LICENSE_ADMIN_RESULT=NOT_FOUND")

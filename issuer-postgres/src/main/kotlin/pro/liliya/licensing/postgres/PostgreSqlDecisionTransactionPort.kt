@@ -213,15 +213,11 @@ class PostgreSqlDecisionTransactionPort(
     }
 
     private fun acquireScopeLock(connection: Connection, scope: DecisionScope) {
-        connection.prepareStatement(
-            "SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))"
-        ).use { statement ->
-            statement.setString(1, scope.subject)
-            statement.setString(2, scope.productId)
-            statement.executeQuery().use { result ->
-                check(result.next()) { "advisory lock query returned no row" }
-            }
-        }
+        PostgreSqlEntitlementAdvisoryLock.acquire(
+            connection = connection,
+            subject = scope.subject,
+            productId = scope.productId
+        )
     }
 
     private fun loadLocked(
