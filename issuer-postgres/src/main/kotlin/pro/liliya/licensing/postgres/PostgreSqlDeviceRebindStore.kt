@@ -123,13 +123,17 @@ class PostgreSqlDeviceRebindStore(
         connection: Connection,
         claims: DeviceRebindCodeClaims
     ): EntitlementState {
+        PostgreSqlEntitlementAdvisoryLock.acquire(
+            connection,
+            claims.subject,
+            claims.productId
+        )
         connection.prepareStatement(
             """
             SELECT device_binding_required, revoked_at, device_binding_epoch
             FROM licensing_entitlement
             WHERE subject = ?
               AND product_id = ?
-            FOR UPDATE
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, claims.subject)
@@ -272,13 +276,17 @@ class PostgreSqlDeviceRebindStore(
         installationId: String,
         deviceKeyFingerprint: String
     ): ReplayState {
+        PostgreSqlEntitlementAdvisoryLock.acquire(
+            connection,
+            claims.subject,
+            claims.productId
+        )
         connection.prepareStatement(
             """
             SELECT revoked_at, device_binding_required, device_binding_epoch
             FROM licensing_entitlement
             WHERE subject = ?
               AND product_id = ?
-            FOR UPDATE
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, claims.subject)

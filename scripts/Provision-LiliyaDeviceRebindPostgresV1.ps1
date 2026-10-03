@@ -188,6 +188,16 @@ try {
         throw "Device rebind writer privileges are not minimal."
     }
 
+    $advisoryLockSql =
+        "BEGIN; " +
+        "SELECT pg_advisory_xact_lock(0); " +
+        "SELECT device_binding_epoch FROM licensing_entitlement WHERE false; " +
+        "ROLLBACK;"
+    $advisoryLockProbe = & $Psql -h 127.0.0.1 -p 5432 -U $WriterRole -d liliya_licensing -v ON_ERROR_STOP=1 -t -A -c $advisoryLockSql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Device rebind writer cannot acquire advisory lock and read entitlement epoch."
+    }
+
     Write-Host "DEVICE_REBIND_POSTGRES_PROVISIONING_READY"
     Write-Host "WRITER_ROLE=liliya_device_rebind_writer"
     Write-Host "MINIMAL_GRANTS=PASS"

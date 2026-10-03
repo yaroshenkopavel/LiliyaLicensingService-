@@ -26,6 +26,11 @@ class PostgreSqlLicenseAdministrationStore(
             dataSource.connection.use { connection ->
                 connection.autoCommit = false
                 try {
+                    PostgreSqlEntitlementAdvisoryLock.acquire(
+                        connection,
+                        subject,
+                        productId
+                    )
                     val currentEpoch = connection.prepareStatement(
                         """
                         SELECT device_binding_epoch
@@ -119,6 +124,11 @@ class PostgreSqlLicenseAdministrationStore(
             dataSource.connection.use { connection ->
                 connection.autoCommit = false
                 try {
+                    PostgreSqlEntitlementAdvisoryLock.acquire(
+                        connection,
+                        subject,
+                        productId
+                    )
                     val updated = connection.prepareStatement(
                         """
                         UPDATE licensing_entitlement
