@@ -100,6 +100,7 @@ try {
     $null = Invoke-AdminSql -Credential $adminCredential -Sql $roleSql
 
     $grantSql =
+        "GRANT CONNECT ON DATABASE liliya_licensing TO liliya_license_admin; " +
         "GRANT USAGE ON SCHEMA public TO liliya_license_admin; " +
         "REVOKE ALL ON TABLE licensing_entitlement FROM liliya_license_admin; " +
         "REVOKE ALL ON TABLE licensing_activation_redemption FROM liliya_license_admin; " +
@@ -118,6 +119,8 @@ try {
     $env:PGPASSWORD = $operatorCredential
     $verifySql =
         "SELECT " +
+        "has_database_privilege(current_user,'liliya_licensing','CONNECT') AND " +
+        "NOT has_database_privilege(current_user,'liliya_licensing','CREATE') AND " +
         "NOT has_table_privilege(current_user,'licensing_entitlement','SELECT') AND " +
         "NOT has_table_privilege(current_user,'licensing_entitlement','UPDATE') AND " +
         "NOT has_table_privilege(current_user,'licensing_entitlement','INSERT') AND " +
