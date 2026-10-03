@@ -40,9 +40,7 @@ function Invoke-AdminSql {
     param([string] $Sql, [string] $Credential)
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $Psql
-    foreach ($arg in @("-h","127.0.0.1","-p","5432","-U","postgres","-d","liliya_licensing","-v","ON_ERROR_STOP=1","-t","-A")) {
-        $psi.ArgumentList.Add($arg)
-    }
+    $psi.Arguments = "-h 127.0.0.1 -p 5432 -U postgres -d liliya_licensing -v ON_ERROR_STOP=1 -t -A"
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
