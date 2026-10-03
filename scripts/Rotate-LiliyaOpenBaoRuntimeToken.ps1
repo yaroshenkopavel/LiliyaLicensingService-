@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 
 $Bao = "C:\LiliyaServer\bin\openbao-2.6.2\bao.exe"
 $RootTokenFile = "C:\LiliyaServer\backup\openbao-secrets\initial-root-token.dpapi"
@@ -119,4 +119,3 @@ finally {
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
 }
-
