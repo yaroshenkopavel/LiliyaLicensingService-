@@ -107,6 +107,16 @@ try {
         Pop-Location
     }
 
+    $ownerExists = Invoke-AdminSql -Credential $adminCredential -Sql "SELECT 1 FROM pg_roles WHERE rolname = 'liliya_licensing_owner';"
+    if ([string]::IsNullOrWhiteSpace($ownerExists)) {
+        $null = Invoke-AdminSql -Credential $adminCredential -Sql "CREATE ROLE liliya_licensing_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
+    }
+    else {
+        $null = Invoke-AdminSql -Credential $adminCredential -Sql "ALTER ROLE liliya_licensing_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
+    }
+    $null = Invoke-AdminSql -Credential $adminCredential -Sql "ALTER DATABASE liliya_licensing OWNER TO liliya_licensing_owner;"
+    $null = Invoke-AdminSql -Credential $adminCredential -Sql "REVOKE CREATE ON DATABASE liliya_licensing FROM PUBLIC; REVOKE CREATE ON DATABASE liliya_licensing FROM liliya_licensing; GRANT CONNECT ON DATABASE liliya_licensing TO liliya_licensing;"
+
     $exists = Invoke-AdminSql -Credential $adminCredential -Sql "SELECT 1 FROM pg_roles WHERE rolname = 'liliya_activation_writer';"
     $escaped = $writerCredential.Replace("'","''")
 
@@ -208,6 +218,9 @@ try {
     }
 
     $runtimeVerifySql = "SELECT " +
+        "has_database_privilege(current_user,'liliya_licensing','CONNECT') AND " +
+        "NOT has_database_privilege(current_user,'liliya_licensing','CREATE') AND " +
+        "current_user <> (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()) AND " +
         "has_schema_privilege(current_user,'public','USAGE') AND " +
         "NOT has_schema_privilege(current_user,'public','CREATE') AND " +
         "NOT has_table_privilege(current_user,'licensing_device_binding','SELECT') AND " +
@@ -231,6 +244,26 @@ try {
             throw "Runtime PostgreSQL device-binding verification failed."
         }
         if (([string]$runtimeVerify).Trim() -ne "t") {
+            $runtimeDiagnosticSql = "SELECT concat_ws('|'," +
+                "has_schema_privilege(current_user,'public','USAGE')::text," +
+                "has_schema_privilege(current_user,'public','CREATE')::text," +
+                "has_table_privilege(current_user,'licensing_device_binding','SELECT')::text," +
+                "has_table_privilege(current_user,'licensing_device_binding','INSERT')::text," +
+                "has_table_privilege(current_user,'licensing_device_binding','UPDATE')::text," +
+                "has_table_privilege(current_user,'licensing_device_binding','DELETE')::text," +
+                "has_column_privilege(current_user,'licensing_device_binding','subject','SELECT')::text," +
+                "has_column_privilege(current_user,'licensing_device_binding','installation_id','SELECT')::text," +
+                "has_column_privilege(current_user,'licensing_device_binding','device_key_fingerprint','SELECT')::text," +
+                "has_column_privilege(current_user,'licensing_device_binding','status','SELECT')::text," +
+                "has_column_privilege(current_user,'licensing_device_binding','revoked_at','SELECT')::text);"
+            $runtimeDiagnostic = & $Psql -h 127.0.0.1 -p 5432 -U "liliya_licensing" -d liliya_licensing -t -A -c $runtimeDiagnosticSql
+            Write-Host ("RUNTIME_DEVICE_BINDING_ACL=" + ([string]$runtimeDiagnostic).Trim())
+            $runtimeOwnershipSql = "SELECT concat_ws('|'," +
+                "current_user," +
+                "(SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public')," +
+                "(SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()));"
+            $runtimeOwnership = & $Psql -h 127.0.0.1 -p 5432 -U "liliya_licensing" -d liliya_licensing -t -A -c $runtimeOwnershipSql
+            Write-Host ("RUNTIME_OWNERSHIP=" + ([string]$runtimeOwnership).Trim())
             throw "Runtime PostgreSQL device-binding privileges are not read-only."
         }
     }
