@@ -57,7 +57,7 @@ try {
     $stdout = $process.StandardOutput.ReadToEnd().Trim()
     $null = $process.StandardError.ReadToEnd()
     $process.WaitForExit()
-    $psi.Environment.Remove("PGPASSWORD")
+    $null = $psi.Environment.Remove("PGPASSWORD")
 
     if ($process.ExitCode -ne 0) {
         Write-Host "POSTGRES_ADMIN_CREDENTIAL_SETUP_BLOCKED"
@@ -65,9 +65,14 @@ try {
         exit 6
     }
 
-    if ($stdout -ne "postgres|t|t|t") {
+    $capabilitiesOk = $stdout -in @(
+        "postgres|t|t|t",
+        "postgres|true|true|true"
+    )
+    if (-not $capabilitiesOk) {
         Write-Host "POSTGRES_ADMIN_CREDENTIAL_SETUP_BLOCKED"
         Write-Host "REASON=POSTGRES_ADMIN_CAPABILITIES_MISMATCH"
+        Write-Host "OBSERVED_ROLE_CAPABILITIES=$stdout"
         exit 7
     }
 
