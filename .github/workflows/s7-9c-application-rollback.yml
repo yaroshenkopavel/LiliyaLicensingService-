@@ -324,7 +324,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79c-ob-token)"
           AUTH_SECRET="$(cat .s79c-auth)"
           TLS_PASS="$(cat .s79c-https-pass)"
