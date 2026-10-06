@@ -43,3 +43,27 @@ Operational deployment must preserve all of the following:
 ## Remaining acceptance work
 
 A green repository test suite proves the checked-in code baseline, not full production readiness. Environment-specific rotation, backup/restore drills, certificate lifecycle, recovery procedures, secret renewal, startup/idempotency and end-to-end deployment acceptance remain operational gates and must be verified on the target environment before declaring production readiness.
+
+
+## Canonical PostgreSQL production service
+
+Current production topology uses PostgreSQL 17.11 on the canonical endpoint:
+
+`127.0.0.1:5432`
+
+Windows service:
+
+`postgresql-x64-17-liliya`
+
+The checked-in startup helper must wait for this exact service before starting Licensing Service.
+
+The historical PostgreSQL 16 service:
+
+`postgresql-x64-16`
+
+is rollback-only and must remain `Stopped / Manual` until the dedicated rollback-retirement gate is explicitly closed. Do not start PG16 as part of normal production startup and do not delete its retained data merely because PG17 is canonical.
+
+A full Windows reboot/autostart proof remains a separate operational acceptance gate.
+
+
+Repository recovery rule: the checked-in startup script must reproduce the canonical production database dependency and must never use the rollback PostgreSQL 16 service as a normal readiness prerequisite.
