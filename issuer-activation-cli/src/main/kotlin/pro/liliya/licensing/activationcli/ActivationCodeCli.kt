@@ -38,10 +38,14 @@ fun main(args: Array<String>) {
 
     println("ACTIVATION_CODE=$code")
     println("DEVICE_POLICY=ONE_ACTIVE_DEVICE")
+    println(
+        "OFFLINE_POLICY=" +
+            (parsed.offlineLeaseSeconds?.let { "FINITE_SECONDS:$it" } ?: "UNLIMITED")
+    )
     println("ACTIVATION_CODE_WARNING=Treat this unused code as a credential until redeemed.")
 }
 
-private data class CliArgs(
+internal data class CliArgs(
     val productId: String,
     val features: Set<String>,
     val activationExpiresAt: Instant?,
@@ -58,6 +62,7 @@ private data class CliArgs(
             var entitlementLifetimeSeen = false
             var offlineLeaseSeconds: Long? = null
             var offlineLeaseSeen = false
+            var allowFiniteOfflineLease = false
             var index = 0
 
             while (index < args.size) {
@@ -96,6 +101,9 @@ private data class CliArgs(
                             else raw.toLongOrNull()?.takeIf { it > 0 } ?: return null
                     }
 
+                    "--allow-finite-offline-lease" ->
+                        allowFiniteOfflineLease = true
+
                     else -> return null
                 }
                 index += 1
@@ -105,10 +113,19 @@ private data class CliArgs(
                 product == null ||
                 features == null ||
                 !activationExpirySeen ||
-                !entitlementLifetimeSeen ||
-                !offlineLeaseSeen
+                !entitlementLifetimeSeen
             ) return null
 
+            if (!offlineLeaseSeen) {
+                offlineLeaseSeconds = null
+            }
+
+            if (offlineLeaseSeconds != null && !allowFiniteOfflineLease) {
+                return null
+            }
+            if (allowFiniteOfflineLease && offlineLeaseSeconds == null) {
+                return null
+            }
             if (
                 entitlementLifetimeSeconds != null &&
                 offlineLeaseSeconds != null &&
@@ -135,5 +152,5 @@ private fun failUsage(): Nothing =
         "usage: --product <id> --features <a,b> " +
             "--activation-expires-at <ISO-8601|never> " +
             "--license-seconds <seconds|never> " +
-            "--offline-seconds <seconds|none>"
+            "[--offline-seconds <none|seconds> [--allow-finite-offline-lease]]"
     )
