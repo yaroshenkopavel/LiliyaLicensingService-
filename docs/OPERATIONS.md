@@ -12,6 +12,21 @@ Primary source checkout:
 
 Local platform components currently provisioned under the foundation include PostgreSQL, OpenBao, TLS material/configuration, startup scripts, logs and the Licensing Service source/build outputs.
 
+## Canonical Windows PostgreSQL topology
+
+Current production topology on the owner laptop:
+
+- canonical production service: `postgresql-x64-17-liliya`;
+- canonical PostgreSQL version: 17.11;
+- canonical endpoint: `127.0.0.1:5432`;
+- database: `liliya_licensing`;
+- preserved rollback service: `postgresql-x64-16`;
+- rollback service state: Stopped / Manual.
+
+The production startup script must wait for `postgresql-x64-17-liliya`. It must not start, depend on, or silently fall back to the PG16 rollback service.
+
+PG16 remains rollback-only until full Windows reboot/autostart acceptance is GREEN and retirement is explicitly approved.
+
 ## Required pre-change verification
 
 Before changing production wiring:

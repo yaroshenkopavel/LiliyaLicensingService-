@@ -181,7 +181,7 @@ $postgresReady = $false
 for ($i = 0; $i -lt 60; $i++) {
     $pg =
         Get-Service `
-            postgresql-x64-16 `
+            postgresql-x64-17-liliya `
             -ErrorAction SilentlyContinue
 
     if ($pg -and $pg.Status -eq "Running") {
