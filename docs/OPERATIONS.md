@@ -64,3 +64,6 @@ The historical PostgreSQL 16 service:
 is rollback-only and must remain `Stopped / Manual` until the dedicated rollback-retirement gate is explicitly closed. Do not start PG16 as part of normal production startup and do not delete its retained data merely because PG17 is canonical.
 
 A full Windows reboot/autostart proof remains a separate operational acceptance gate.
+
+
+Repository recovery rule: the checked-in startup script must reproduce the canonical production database dependency and must never use the rollback PostgreSQL 16 service as a normal readiness prerequisite.
