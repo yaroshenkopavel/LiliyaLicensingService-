@@ -83,3 +83,28 @@ The live production helper remains separately deployed under:
 `C:\LiliyaServer\bin\startup\Start-LiliyaLicensingService.ps1`
 
 Repository changes do not replace or restart that healthy deployed helper automatically.
+
+
+## Owner activation-code offline policy
+
+Canonical product policy is unlimited offline operation until a later verified online revocation/service-state update.
+
+The owner activation-code CLI therefore treats an omitted `--offline-seconds` as:
+
+`OFFLINE_POLICY=UNLIMITED`
+
+Explicit `--offline-seconds none` has the same result.
+
+A finite offline lease is rejected unless the owner deliberately supplies both:
+
+`--offline-seconds <positive-seconds>`
+
+and:
+
+`--allow-finite-offline-lease`
+
+This is an expert override. It must not be used for the normal LiliyaCore product flow.
+
+The generated CLI output reports the selected offline policy without exposing signing secrets.
+
+This operator policy is distinct from revocation semantics: unlimited offline duration does not prevent a later verified service-state sync from advancing the durable revocation/replay floor.
