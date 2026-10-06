@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $Gradle = "C:\LiliyaServer\bin\gradle-9.6.1\bin\gradle.bat"
 $Repo = "C:\LiliyaServer\src\LiliyaLicensingService"
-$Psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+$Psql = "C:\LiliyaServer\tools\postgresql-17.11-4\pgsql\bin\psql.exe"
 $AdminCredentialFile = "C:\LiliyaServer\backup\licensing-secrets\postgres-admin-credential.dpapi"
 $WriterCredentialFile = "C:\LiliyaServer\backup\licensing-secrets\activation-postgres-writer-credential.dpapi"
 $WriterRole = "liliya_activation_writer"
