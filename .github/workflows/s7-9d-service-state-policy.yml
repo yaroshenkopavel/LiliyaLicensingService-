@@ -293,6 +293,11 @@ jobs:
           grep -F 'LICENSING_S7_9A_SCHEMA_EVIDENCE=' s79d-schema.log
           docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79d-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79d             -c "GRANT USAGE ON SCHEMA public TO liliya_s79d_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79d_runtime"             -c "REVOKE ALL ON TABLE licensing_entitlement FROM liliya_s79d_runtime"             -c "REVOKE ALL ON TABLE licensing_device_binding FROM liliya_s79d_runtime"             -c "GRANT SELECT (license_id, subject, product_id, features, version, signing_key_id, issued_at, not_before, expires_at, offline_lease_until, revocation_epoch, revoked_at, device_binding_required) ON TABLE licensing_entitlement TO liliya_s79d_runtime"             -c "GRANT SELECT (subject, installation_id, device_key_fingerprint, status) ON TABLE licensing_device_binding TO liliya_s79d_runtime" >/dev/null
 
+          PGPASSWORD="$PG_RUNTIME" psql -v ON_ERROR_STOP=1 \
+            -h 127.0.0.1 -p 18630 -U liliya_s79d_runtime -d liliya_s79d \
+            -c "SELECT e.license_id, e.subject, e.product_id, e.features, e.version, e.signing_key_id, e.issued_at, e.not_before, e.expires_at, e.offline_lease_until, e.revocation_epoch, e.revoked_at, e.device_binding_required, b.installation_id AS binding_installation_id, b.device_key_fingerprint AS binding_device_key_fingerprint, b.status AS binding_status FROM licensing_entitlement e LEFT JOIN licensing_device_binding b ON b.subject = e.subject AND b.status = 'ACTIVE' WHERE FALSE" >/dev/null
+          echo "S79D_RUNTIME_ENTITLEMENT_READ_PROBE=PASS"
+
       - name: Start real production entrypoint with both exact signing keys
         shell: bash
         run: |
