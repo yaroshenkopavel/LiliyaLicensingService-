@@ -308,6 +308,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RUNTIME_CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79d-ob-token)"
           AUTH_SECRET="$(cat .s79d-auth)"
