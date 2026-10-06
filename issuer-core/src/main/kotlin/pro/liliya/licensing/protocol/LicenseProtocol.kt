@@ -135,7 +135,8 @@ data class EntitlementDecision(
     val expiresAt: Instant?,
     val offlineLeaseUntil: Instant?,
     val revocationEpoch: Long,
-    val replaySequence: Long?
+    val replaySequence: Long?,
+    val deviceBindingReference: String? = null
 ) {
     override fun toString(): String =
         "EntitlementDecision(licenseId=" + licenseId +

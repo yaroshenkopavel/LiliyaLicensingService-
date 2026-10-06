@@ -12,7 +12,7 @@ dependencies {
     implementation(project(":issuer-testkit"))
     implementation(project(":issuer-openbao-transit"))
     implementation(project(":issuer-http-endpoint"))
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.21.7")
 }
 
 application {

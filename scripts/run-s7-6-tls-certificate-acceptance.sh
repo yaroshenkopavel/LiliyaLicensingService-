@@ -17,6 +17,9 @@ else
   exit 2
 fi
 
+echo "=== S7.6 PRECOMPILE HTTPS ACCEPTANCE HOST ==="
+"${GRADLE[@]}" :issuer-https-listener:testClasses --console=plain >/dev/null
+
 WORK_DIR="$(mktemp -d)"
 PORT="${S7_6_TLS_PORT:-18443}"
 PASSWORD="$(openssl rand -hex 24)"

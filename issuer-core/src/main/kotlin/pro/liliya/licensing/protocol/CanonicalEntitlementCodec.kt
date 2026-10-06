@@ -13,6 +13,7 @@ import java.time.Instant
  */
 object CanonicalEntitlementCodec {
     private const val MAGIC = 0x4C494331
+    private const val DEVICE_BINDING_EXTENSION_MAGIC = 0x44425631
 
     fun encode(entitlement: CanonicalLicenseEntitlement): ByteArray =
         ByteArrayOutputStream().use { output ->
@@ -33,6 +34,11 @@ object CanonicalEntitlementCodec {
                 data.writeLong(entitlement.revocationEpoch)
                 data.writeBoolean(entitlement.replaySequence != null)
                 entitlement.replaySequence?.let { data.writeLong(it) }
+
+                entitlement.deviceBindingReference?.let { reference ->
+                    data.writeInt(DEVICE_BINDING_EXTENSION_MAGIC)
+                    data.writeString(reference)
+                }
             }
             output.toByteArray()
         }

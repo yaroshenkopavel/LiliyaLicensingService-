@@ -64,7 +64,8 @@ class LicensingIssuerCoordinator(
                         expiresAt = sourceRecord.expiresAt,
                         offlineLeaseUntil = sourceRecord.offlineLeaseUntil,
                         revocationEpoch = sourceRecord.revocationEpoch,
-                        replaySequence = nextReplay
+                        replaySequence = nextReplay,
+                        deviceBindingReference = sourceRecord.deviceBindingReference
                     )
                 )
                 val entitlement = when (composed) {

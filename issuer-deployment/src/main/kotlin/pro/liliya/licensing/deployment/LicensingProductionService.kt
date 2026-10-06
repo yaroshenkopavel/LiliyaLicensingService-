@@ -2,12 +2,18 @@ package pro.liliya.licensing.deployment
 
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
+import pro.liliya.licensing.activation.ActivationRedemptionService
+import pro.liliya.licensing.activation.DeviceRebindService
+import pro.liliya.licensing.activation.SecureRandomActivationSubjectGenerator
 import org.postgresql.ds.PGSimpleDataSource
 import pro.liliya.licensing.auth.RequestAuthenticationCredential
 import pro.liliya.licensing.auth.RequestAuthenticationFailure
 import pro.liliya.licensing.auth.RequestAuthenticationPort
 import pro.liliya.licensing.auth.RequestAuthenticationResult
+import pro.liliya.licensing.http.ActivationRedemptionHttpEndpoint
+import pro.liliya.licensing.http.DeviceRebindHttpEndpoint
 import pro.liliya.licensing.http.AuthenticatedLicenseHttpEndpoint
+import pro.liliya.licensing.http.LicensingIssuerProcessor
 import pro.liliya.licensing.http.AuthenticatedServiceStateHttpEndpoint
 import pro.liliya.licensing.http.LicenseHttpEndpoint
 import pro.liliya.licensing.http.LicensingHttpRouter
@@ -17,6 +23,7 @@ import pro.liliya.licensing.https.ProductionHttpsListener
 import pro.liliya.licensing.https.TlsPassword
 import pro.liliya.licensing.issuer.EntitlementSourcePort
 import pro.liliya.licensing.issuer.LicensingIssuerCoordinator
+import pro.liliya.licensing.openbao.OpenBaoTransitActivationCodePublicKeyResolver
 import pro.liliya.licensing.openbao.OpenBaoTransitClient
 import pro.liliya.licensing.openbao.OpenBaoTransitDescribeResult
 import pro.liliya.licensing.openbao.OpenBaoTransitEndpoint
@@ -25,6 +32,9 @@ import pro.liliya.licensing.openbao.OpenBaoTransitKeyBinding
 import pro.liliya.licensing.openbao.OpenBaoTransitLicenseEnvelopeSigner
 import pro.liliya.licensing.openbao.OpenBaoTransitProductionSigningProfile
 import pro.liliya.licensing.openbao.OpenBaoTransitServiceStateProofSigner
+import pro.liliya.licensing.postgres.ActivationEntitlementPolicy
+import pro.liliya.licensing.postgres.PostgreSqlActivationRedemptionStore
+import pro.liliya.licensing.postgres.PostgreSqlDeviceRebindStore
 import pro.liliya.licensing.postgres.PostgreSqlDecisionTransactionPort
 import pro.liliya.licensing.protocol.LicenseProtocolVersion
 import pro.liliya.licensing.protocol.LicenseRequestValidator
@@ -98,6 +108,51 @@ class SharedSecretRequestAuthentication(
         "SharedSecretRequestAuthentication(secret=<redacted>,closed=" + closed + ")"
 }
 
+class CompositePostgreSqlRuntimeReadinessDependency(
+    dependencies: List<LicensingRuntimeDependency>
+) : LicensingRuntimeDependency {
+    private val dependencies = dependencies.toList()
+
+    init {
+        require(this.dependencies.isNotEmpty()) {
+            "composite PostgreSQL readiness requires at least one dependency"
+        }
+        require(
+            this.dependencies.all {
+                it.kind == LicensingRuntimeDependencyKind.POSTGRESQL
+            }
+        ) {
+            "composite PostgreSQL readiness accepts PostgreSQL dependencies only"
+        }
+    }
+
+    override val kind: LicensingRuntimeDependencyKind =
+        LicensingRuntimeDependencyKind.POSTGRESQL
+
+    override fun prepare(): LicensingRuntimeDependencyResult {
+        for (dependency in dependencies) {
+            when (dependency.prepare()) {
+                LicensingRuntimeDependencyResult.Ready -> Unit
+                is LicensingRuntimeDependencyResult.Failed ->
+                    return LicensingRuntimeDependencyResult.Failed(
+                        LicensingRuntimeFailure.POSTGRESQL_UNAVAILABLE
+                    )
+            }
+        }
+        return LicensingRuntimeDependencyResult.Ready
+    }
+
+    override fun close() {
+        dependencies.asReversed().forEach { dependency ->
+            runCatching { dependency.close() }
+        }
+    }
+
+    override fun toString(): String =
+        "CompositePostgreSqlRuntimeReadinessDependency(count=" +
+            dependencies.size + ")"
+}
+
 class PostgreSqlRuntimeReadinessDependency(
     private val dataSource: PGSimpleDataSource
 ) : LicensingRuntimeDependency {
@@ -133,7 +188,166 @@ class PostgreSqlRuntimeReadinessDependency(
         "PostgreSqlRuntimeReadinessDependency(dataSource=<redacted>)"
 }
 
-data class OpenBaoRuntimeKeyRequirement(
+data class ActivationPostgreSqlRuntimeReadinessDependency(
+    private val dataSource: PGSimpleDataSource
+) : LicensingRuntimeDependency {
+    override val kind: LicensingRuntimeDependencyKind =
+        LicensingRuntimeDependencyKind.POSTGRESQL
+
+    override fun prepare(): LicensingRuntimeDependencyResult =
+        try {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    SELECT
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'license_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'subject', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'product_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'features', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'version', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'signing_key_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'issued_at', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'not_before', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'expires_at', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'offline_lease_until', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'revocation_epoch', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'device_binding_required', 'INSERT') AND
+                        NOT has_column_privilege(current_user, 'licensing_entitlement', 'device_binding_epoch', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_activation_redemption', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_activation_redemption', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_activation_redemption', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_activation_redemption', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'code_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'attempt_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'subject', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'product_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'installation_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'device_key_fingerprint', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'redeemed_at', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'code_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'attempt_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'subject', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'product_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'installation_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'device_key_fingerprint', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_activation_redemption', 'redeemed_at', 'INSERT') AND
+                        NOT has_column_privilege(current_user, 'licensing_activation_redemption', 'attempt_id', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'binding_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'subject', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'installation_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'device_key_fingerprint', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'status', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'bound_at', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'revoked_at', 'INSERT') AND
+                        NOT has_column_privilege(current_user, 'licensing_device_binding', 'status', 'UPDATE')
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.executeQuery().use { result ->
+                        if (!result.next()) error("activation PostgreSQL privilege row missing")
+                        check(result.getBoolean(1)) {
+                            "activation PostgreSQL writer privileges are not minimal"
+                        }
+                    }
+                }
+            }
+            LicensingRuntimeDependencyResult.Ready
+        } catch (_: Exception) {
+            LicensingRuntimeDependencyResult.Failed(
+                LicensingRuntimeFailure.POSTGRESQL_UNAVAILABLE
+            )
+        }
+
+    override fun close() = Unit
+}
+
+data class DeviceRebindPostgreSqlRuntimeReadinessDependency(
+    private val dataSource: PGSimpleDataSource
+) : LicensingRuntimeDependency {
+    override val kind: LicensingRuntimeDependencyKind =
+        LicensingRuntimeDependencyKind.POSTGRESQL
+
+    override fun prepare(): LicensingRuntimeDependencyResult =
+        try {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    SELECT
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_entitlement', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'subject', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'product_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'revoked_at', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'device_binding_required', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_entitlement', 'device_binding_epoch', 'SELECT') AND
+                        NOT has_column_privilege(current_user, 'licensing_entitlement', 'features', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_binding', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'subject', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'installation_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'device_key_fingerprint', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'status', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'binding_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'subject', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'installation_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'device_key_fingerprint', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'status', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'bound_at', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_binding', 'revoked_at', 'INSERT') AND
+                        NOT has_column_privilege(current_user, 'licensing_device_binding', 'status', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'SELECT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'INSERT') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'UPDATE') AND
+                        NOT has_table_privilege(current_user, 'licensing_device_rebind_redemption', 'DELETE') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'code_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'attempt_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'subject', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'product_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_binding_epoch', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'installation_id', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_key_fingerprint', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'redeemed_at', 'SELECT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'code_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'attempt_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'subject', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'product_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_binding_epoch', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'installation_id', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'device_key_fingerprint', 'INSERT') AND
+                        has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'redeemed_at', 'INSERT') AND
+                        NOT has_column_privilege(current_user, 'licensing_device_rebind_redemption', 'attempt_id', 'UPDATE')
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.executeQuery().use { result ->
+                        if (!result.next()) error("device rebind PostgreSQL privilege row missing")
+                        check(result.getBoolean(1)) {
+                            "device rebind PostgreSQL writer privileges are not minimal"
+                        }
+                    }
+                }
+            }
+            LicensingRuntimeDependencyResult.Ready
+        } catch (_: Exception) {
+            LicensingRuntimeDependencyResult.Failed(
+                LicensingRuntimeFailure.POSTGRESQL_UNAVAILABLE
+            )
+        }
+
+    override fun close() = Unit
+}
+
+class OpenBaoRuntimeKeyRequirement(
     val keyName: String,
     val keyVersion: Int
 ) {
@@ -271,8 +485,13 @@ class LicensingProductionService private constructor(
         fun create(
             deploymentConfig: LicensingDeploymentConfig,
             runtimeMaterial: ProductionRuntimeMaterial,
-            entitlementSource: EntitlementSourcePort
+            entitlementSource: EntitlementSourcePort,
+            activationConfig: ActivationDeploymentConfig? = null,
+            deviceRebindConfig: DeviceRebindDeploymentConfig? = null
         ): LicensingProductionService {
+            require(deviceRebindConfig == null || activationConfig != null) {
+                "device rebind requires activation signing configuration"
+            }
             val dataSource = PGSimpleDataSource().apply {
                 setURL(deploymentConfig.postgresJdbcUrl)
                 user = deploymentConfig.postgresUsername
@@ -321,26 +540,95 @@ class LicensingProductionService private constructor(
                 )
             )
 
-            val endpoint = AuthenticatedLicenseHttpEndpoint(
-                delegate = LicenseHttpEndpoint(
-                    LicensingIssuerCoordinator(
-                        validator = LicenseRequestValidator(
-                            supportedVersion = LicenseProtocolVersion(1)
-                        ),
-                        source = entitlementSource,
-                        transactions = transactions,
-                        signing = LicenseSigningComposition(signer)
-                    )
+            val issuerCoordinator = LicensingIssuerCoordinator(
+                validator = LicenseRequestValidator(
+                    supportedVersion = LicenseProtocolVersion(1)
                 ),
+                source = entitlementSource,
+                transactions = transactions,
+                signing = LicenseSigningComposition(signer)
+            )
+
+            val endpoint = AuthenticatedLicenseHttpEndpoint(
+                delegate = LicenseHttpEndpoint(issuerCoordinator),
                 authentication = authentication
             )
             val serviceStateEndpoint = AuthenticatedServiceStateHttpEndpoint(
                 service = serviceStateService,
                 authentication = authentication
             )
+
+            val activationDataSource = activationConfig?.let { config ->
+                PGSimpleDataSource().apply {
+                    setURL(deploymentConfig.postgresJdbcUrl)
+                    user = config.writerUsername
+                    config.writerCredential.useChars { chars ->
+                        password = chars.concatToString()
+                    }
+                }
+            }
+
+            val activationEndpoint = activationConfig?.let { config ->
+                val publicKeys = OpenBaoTransitActivationCodePublicKeyResolver.create(
+                    client = openBaoClient,
+                    keyId = config.logicalKeyId,
+                    keyName = config.openBaoKeyName,
+                    keyVersion = config.openBaoKeyVersion
+                )
+                val store = PostgreSqlActivationRedemptionStore(
+                    dataSource = requireNotNull(activationDataSource),
+                    policy = ActivationEntitlementPolicy(
+                        signingKeyId = deploymentConfig.openBaoKeyReference,
+                        entitlementLifetime =
+                            config.entitlementLifetime?.takeUnless { it.isZero },
+                        offlineLeaseDuration =
+                            config.offlineLeaseDuration?.takeUnless { it.isZero }
+                    )
+                )
+                ActivationRedemptionHttpEndpoint(
+                    service = ActivationRedemptionService(
+                        publicKeys = publicKeys,
+                        store = store,
+                        subjectGenerator = SecureRandomActivationSubjectGenerator()
+                    ),
+                    issuer = LicensingIssuerProcessor(issuerCoordinator::process)
+                )
+            }
+
+            val deviceRebindDataSource = deviceRebindConfig?.let { config ->
+                PGSimpleDataSource().apply {
+                    setURL(deploymentConfig.postgresJdbcUrl)
+                    user = config.writerUsername
+                    config.writerCredential.useChars { chars ->
+                        password = chars.concatToString()
+                    }
+                }
+            }
+
+            val deviceRebindEndpoint = deviceRebindConfig?.let {
+                val activation = requireNotNull(activationConfig)
+                val publicKeys = OpenBaoTransitActivationCodePublicKeyResolver.create(
+                    client = openBaoClient,
+                    keyId = activation.logicalKeyId,
+                    keyName = activation.openBaoKeyName,
+                    keyVersion = activation.openBaoKeyVersion
+                )
+                DeviceRebindHttpEndpoint(
+                    service = DeviceRebindService(
+                        publicKeys = publicKeys,
+                        store = PostgreSqlDeviceRebindStore(
+                            requireNotNull(deviceRebindDataSource)
+                        )
+                    ),
+                    issuer = LicensingIssuerProcessor(issuerCoordinator::process)
+                )
+            }
+
             val router = LicensingHttpRouter(
                 entitlement = endpoint,
-                serviceState = serviceStateEndpoint
+                serviceState = serviceStateEndpoint,
+                activation = activationEndpoint,
+                deviceRebind = deviceRebindEndpoint
             )
 
             val tlsPassword = run {
@@ -364,24 +652,56 @@ class LicensingProductionService private constructor(
                 readiness = { runtimeRef.get()?.isReady() == true }
             )
 
-            val runtime = LicensingProductionRuntime(
-                dependencies = listOf(
-                    PostgreSqlRuntimeReadinessDependency(dataSource),
+            val requiredOpenBaoKeys = buildList {
+                add(
+                    OpenBaoRuntimeKeyRequirement(
+                        keyName = runtimeMaterial.openBaoKeyName,
+                        keyVersion = runtimeMaterial.openBaoKeyVersion
+                    )
+                )
+                add(
+                    OpenBaoRuntimeKeyRequirement(
+                        keyName = runtimeMaterial.serviceStateOpenBaoKeyName,
+                        keyVersion = runtimeMaterial.serviceStateOpenBaoKeyVersion
+                    )
+                )
+                activationConfig?.let {
+                    add(
+                        OpenBaoRuntimeKeyRequirement(
+                            keyName = it.openBaoKeyName,
+                            keyVersion = it.openBaoKeyVersion
+                        )
+                    )
+                }
+            }
+
+            val postgresDependencies = buildList<LicensingRuntimeDependency> {
+                add(PostgreSqlRuntimeReadinessDependency(dataSource))
+                activationDataSource?.let {
+                    add(ActivationPostgreSqlRuntimeReadinessDependency(it))
+                }
+                deviceRebindDataSource?.let {
+                    add(DeviceRebindPostgreSqlRuntimeReadinessDependency(it))
+                }
+            }
+
+            val dependencies = buildList<LicensingRuntimeDependency> {
+                add(
+                    CompositePostgreSqlRuntimeReadinessDependency(
+                        postgresDependencies
+                    )
+                )
+                add(
                     OpenBaoRuntimeReadinessDependency(
                         client = openBaoClient,
-                        requiredKeys = listOf(
-                            OpenBaoRuntimeKeyRequirement(
-                                keyName = runtimeMaterial.openBaoKeyName,
-                                keyVersion = runtimeMaterial.openBaoKeyVersion
-                            ),
-                            OpenBaoRuntimeKeyRequirement(
-                                keyName = runtimeMaterial.serviceStateOpenBaoKeyName,
-                                keyVersion = runtimeMaterial.serviceStateOpenBaoKeyVersion
-                            )
-                        )
-                    ),
-                    RequestAuthenticationRuntimeReadinessDependency(authentication)
-                ),
+                        requiredKeys = requiredOpenBaoKeys
+                    )
+                )
+                add(RequestAuthenticationRuntimeReadinessDependency(authentication))
+            }
+
+            val runtime = LicensingProductionRuntime(
+                dependencies = dependencies,
                 listener = listener
             )
             runtimeRef.set(runtime)

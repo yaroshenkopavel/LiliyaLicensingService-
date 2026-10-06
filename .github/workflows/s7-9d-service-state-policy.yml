@@ -285,26 +285,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          ADMIN_CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          RUNTIME_CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           PG_ADMIN="$(cat .s79d-pg-admin)"
           PG_RUNTIME="$(cat .s79d-pg-runtime)"
-          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18630/liliya_s79d           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD="$PG_ADMIN"             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt |
+          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18630/liliya_s79d           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD="$PG_ADMIN"             java -cp "$ADMIN_CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt |
             tee s79d-schema.log
           grep -F 'LICENSING_S7_9A_SCHEMA_EVIDENCE=' s79d-schema.log
-          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79d-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79d             -c "GRANT USAGE ON SCHEMA public TO liliya_s79d_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79d_runtime" >/dev/null
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79d-postgres             psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79d             -c "GRANT USAGE ON SCHEMA public TO liliya_s79d_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79d_runtime"             -c "REVOKE ALL ON TABLE licensing_entitlement FROM liliya_s79d_runtime"             -c "REVOKE ALL ON TABLE licensing_device_binding FROM liliya_s79d_runtime"             -c "GRANT SELECT (license_id, subject, product_id, features, version, signing_key_id, issued_at, not_before, expires_at, offline_lease_until, revocation_epoch, revoked_at, device_binding_required) ON TABLE licensing_entitlement TO liliya_s79d_runtime"             -c "GRANT SELECT (subject, installation_id, device_key_fingerprint, status) ON TABLE licensing_device_binding TO liliya_s79d_runtime" >/dev/null
+
+          PGPASSWORD="$PG_RUNTIME" psql -v ON_ERROR_STOP=1 \
+            -h 127.0.0.1 -p 18630 -U liliya_s79d_runtime -d liliya_s79d \
+            -c "SELECT e.license_id, e.subject, e.product_id, e.features, e.version, e.signing_key_id, e.issued_at, e.not_before, e.expires_at, e.offline_lease_until, e.revocation_epoch, e.revoked_at, e.device_binding_required, b.installation_id AS binding_installation_id, b.device_key_fingerprint AS binding_device_key_fingerprint, b.status AS binding_status FROM licensing_entitlement e LEFT JOIN licensing_device_binding b ON b.subject = e.subject AND b.status = 'ACTIVE' WHERE FALSE" >/dev/null
+          echo "S79D_RUNTIME_ENTITLEMENT_READ_PROBE=PASS"
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79d-postgres \
+            psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79d \
+            -c "INSERT INTO licensing_entitlement(license_id, subject, product_id, features, version, signing_key_id, issued_at, not_before, expires_at, offline_lease_until, revocation_epoch, revoked_at, device_binding_required, device_binding_epoch) VALUES ('s7-9d-license-001', 's7-9d-service-state-subject', 'liliya-pro', ARRAY['model.local']::text[], 1, 's7-9a-logical-key', now(), now() - interval '1 minute', now() + interval '1 hour', now() + interval '30 minutes', 0, NULL, FALSE, 0)"
+          echo "S79D_AUTHORITATIVE_ENTITLEMENT_FIXTURE=READY"
 
       - name: Start real production entrypoint with both exact signing keys
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          RUNTIME_CP="issuer-deployment/build/install/issuer-deployment/lib/*"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79d-ob-token)"
           AUTH_SECRET="$(cat .s79d-auth)"
           TLS_PASS="$(cat .s79d-https-pass)"
           PG_RUNTIME="$(cat .s79d-pg-runtime)"
           OB_TRUST_PASS="$(cat .s79d-ob-trust-pass)"
 
-          JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s79d-ob/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$OB_TRUST_PASS"           LILIYA_ENVIRONMENT=STAGING           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18633           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18630/liliya_s79d           LILIYA_POSTGRES_USERNAME=liliya_s79d_runtime           LILIYA_POSTGRES_PASSWORD="$PG_RUNTIME"           LILIYA_OPENBAO_ADDRESS=https://127.0.0.1:18631           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79d-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79d-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79d-https/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79d           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9d-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79d           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79d-service.log 2>&1 &
+          JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$GITHUB_WORKSPACE/.s79d-ob/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=$OB_TRUST_PASS"           LILIYA_ENVIRONMENT=STAGING           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18633           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18630/liliya_s79d           LILIYA_POSTGRES_USERNAME=liliya_s79d_runtime           LILIYA_POSTGRES_PASSWORD="$PG_RUNTIME"           LILIYA_OPENBAO_ADDRESS=https://127.0.0.1:18631           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79d-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79d-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79d-https/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79d           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9d-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79d           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$RUNTIME_CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79d-service.log 2>&1 &
           echo $! > .s79d-service-pid
 
           for i in $(seq 1 90); do

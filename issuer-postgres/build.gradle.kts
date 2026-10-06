@@ -8,7 +8,7 @@ kotlin {
 
 dependencies {
     api(project(":issuer-core"))
-    implementation("org.postgresql:postgresql:42.7.7")
+    implementation("org.postgresql:postgresql:42.7.13")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")

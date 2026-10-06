@@ -320,11 +320,47 @@ jobs:
           docker exec liliya-s79c-postgres pg_isready -U postgres -d liliya_s79c >/dev/null
           curl -fsS --cacert .s79c-ob/tls/ca.crt https://127.0.0.1:18611/v1/sys/health >/dev/null
 
+      - name: Apply additive N+1 schema without resetting authoritative state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ADMIN_CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          PG_ADMIN="$(cat .s79c-pg-admin)"
+          PG_RUNTIME="$(cat .s79c-pg-runtime)"
+
+          BEFORE_REPLAY="$(docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres \
+            psql -At -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c \
+            -c "SELECT replay_sequence FROM licensing_decision_state WHERE subject='s7-9c-rollback-subject' AND product_id='liliya-pro'")"
+          test "$BEFORE_REPLAY" = "1"
+
+          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18610/liliya_s79c \
+          S7_9A_POSTGRES_ADMIN_USER=postgres \
+          S7_9A_POSTGRES_ADMIN_PASSWORD="$PG_ADMIN" \
+            java -cp "$ADMIN_CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt |
+            tee s79c-nplus1-schema.log
+
+          grep -F '"entitlementSchemaInitialized":true' s79c-nplus1-schema.log
+          grep -F '"entitlementRowsCreated":false' s79c-nplus1-schema.log
+
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres \
+            psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c \
+            -c "GRANT USAGE ON SCHEMA public TO liliya_s79c_runtime" \
+            -c "REVOKE ALL ON TABLE licensing_entitlement FROM liliya_s79c_runtime" \
+            -c "REVOKE ALL ON TABLE licensing_device_binding FROM liliya_s79c_runtime" \
+            -c "GRANT SELECT (license_id, subject, product_id, features, version, signing_key_id, issued_at, not_before, expires_at, offline_lease_until, revocation_epoch, revoked_at, device_binding_required) ON TABLE licensing_entitlement TO liliya_s79c_runtime" \
+            -c "GRANT SELECT (subject, installation_id, device_key_fingerprint, status) ON TABLE licensing_device_binding TO liliya_s79c_runtime" >/dev/null
+
+          AFTER_REPLAY="$(docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79c-postgres \
+            psql -At -v ON_ERROR_STOP=1 -U postgres -d liliya_s79c \
+            -c "SELECT replay_sequence FROM licensing_decision_state WHERE subject='s7-9c-rollback-subject' AND product_id='liliya-pro'")"
+          test "$AFTER_REPLAY" = "$BEFORE_REPLAY"
+          echo "S79C_NPLUS1_ADDITIVE_SCHEMA=PASS"
+
       - name: Deploy incompatible application version N+1 and prove fail closed
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79c-ob-token)"
           AUTH_SECRET="$(cat .s79c-auth)"
           TLS_PASS="$(cat .s79c-https-pass)"

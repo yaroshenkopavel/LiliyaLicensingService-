@@ -141,20 +141,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          ADMIN_CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          RUNTIME_CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79a-openbao-token)"
           AUTH_SECRET="$(cat .s79a-auth)"
           TLS_PASS="$(cat .s79a-tls-pass)"
           RUNTIME_PASS="$(cat .s79a-db-runtime)"
 
           set +e
-          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9a-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79a           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-not-ready.log 2>&1
+          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9a-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79a           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$RUNTIME_CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-not-ready.log 2>&1
           STATUS=$?
           set -e
 
           test "$STATUS" -ne 0
-          grep -F '"code":"RUNTIME_NOT_READY"' s79a-not-ready.log
-          grep -F '"reason":"POSTGRESQL_UNAVAILABLE"' s79a-not-ready.log
+          test ! -s .s79a-unexpected-ready
+          if grep -F '"code":"RUNTIME_NOT_READY"' s79a-not-ready.log >/dev/null 2>&1; then
+            grep -F '"reason":"POSTGRESQL_UNAVAILABLE"' s79a-not-ready.log
+          else
+            grep -F '"component":"ENTITLEMENT_SOURCE"' s79a-not-ready.log
+            grep -F '"code":"DEPENDENCY_UNAVAILABLE"' s79a-not-ready.log
+            grep -F '"reason":"ENTITLEMENT_SOURCE_UNAVAILABLE"' s79a-not-ready.log
+          fi
           ! grep -F "$RUNTIME_PASS" s79a-not-ready.log
           ! grep -F "$AUTH_SECRET" s79a-not-ready.log
           ! grep -F "$APP_TOKEN" s79a-not-ready.log
@@ -163,25 +170,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          ADMIN_CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          RUNTIME_CP="issuer-deployment/build/install/issuer-deployment/lib/*"
 
-          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD=s79a-admin-fixture             java -cp "$CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt             | tee s79a-schema.log
+          S7_9A_POSTGRES_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           S7_9A_POSTGRES_ADMIN_USER=postgres           S7_9A_POSTGRES_ADMIN_PASSWORD=s79a-admin-fixture             java -cp "$ADMIN_CP" pro.liliya.licensing.deployment.S79aSchemaMigrationMainKt             | tee s79a-schema.log
 
           grep -F 'LICENSING_S7_9A_SCHEMA_EVIDENCE=' s79a-schema.log
 
-          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79a_runtime" >/dev/null
+          PGPASSWORD=s79a-admin-fixture psql             -h 127.0.0.1 -p 18590 -U postgres -d liliya_s79a             -v ON_ERROR_STOP=1             -c "GRANT USAGE ON SCHEMA public TO liliya_s79a_runtime"             -c "GRANT SELECT, INSERT, UPDATE ON TABLE licensing_decision_state TO liliya_s79a_runtime"             -c "REVOKE ALL ON TABLE licensing_entitlement FROM liliya_s79a_runtime"             -c "REVOKE ALL ON TABLE licensing_device_binding FROM liliya_s79a_runtime"             -c "GRANT SELECT (license_id, subject, product_id, features, version, signing_key_id, issued_at, not_before, expires_at, offline_lease_until, revocation_epoch, revoked_at, device_binding_required) ON TABLE licensing_entitlement TO liliya_s79a_runtime"             -c "GRANT SELECT (subject, installation_id, device_key_fingerprint, status) ON TABLE licensing_device_binding TO liliya_s79a_runtime" >/dev/null
 
       - name: Start real production entrypoint and prove READY
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*:issuer-deployment/build/classes/kotlin/test:issuer-deployment/build/resources/test"
+          RUNTIME_CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79a-openbao-token)"
           AUTH_SECRET="$(cat .s79a-auth)"
           TLS_PASS="$(cat .s79a-tls-pass)"
           RUNTIME_PASS="$(cat .s79a-db-runtime)"
 
-          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9a-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79a           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-ready.log 2>&1 &
+          LILIYA_ENVIRONMENT=DEVELOPMENT           LILIYA_LISTENER_HOST=127.0.0.1           LILIYA_LISTENER_PORT=18592           LILIYA_POSTGRES_JDBC_URL=jdbc:postgresql://127.0.0.1:18590/liliya_s79a           LILIYA_POSTGRES_USERNAME=liliya_s79a_runtime           LILIYA_POSTGRES_PASSWORD="$RUNTIME_PASS"           LILIYA_OPENBAO_ADDRESS=http://127.0.0.1:18591           LILIYA_OPENBAO_KEY_REFERENCE=s7-9a-logical-key           LILIYA_OPENBAO_TOKEN="$APP_TOKEN"           LILIYA_REQUEST_AUTH_IDENTITY_REFERENCE=s79a-auth           LILIYA_REQUEST_AUTH_SECRET="$AUTH_SECRET"           LILIYA_TLS_IDENTITY_REFERENCE=s79a-tls           LILIYA_TLS_KEYSTORE_PATH="$GITHUB_WORKSPACE/.s79a-tls/server.p12"           LILIYA_TLS_KEYSTORE_PASSWORD="$TLS_PASS"           LILIYA_OPENBAO_KEY_NAME=license-signing-s79a           LILIYA_OPENBAO_KEY_VERSION=1           LILIYA_SERVICE_STATE_OPENBAO_KEY_REFERENCE=s7-9a-service-state-key           LILIYA_SERVICE_STATE_OPENBAO_KEY_NAME=license-service-state-s79a           LILIYA_SERVICE_STATE_OPENBAO_KEY_VERSION=1             java -cp "$RUNTIME_CP" pro.liliya.licensing.deployment.LicensingDeploymentMainKt             > s79a-ready.log 2>&1 &
           echo $! > .s79a-service-pid
 
           for i in $(seq 1 60); do
