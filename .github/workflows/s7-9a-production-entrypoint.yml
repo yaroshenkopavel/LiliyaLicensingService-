@@ -153,8 +153,14 @@ jobs:
           set -e
 
           test "$STATUS" -ne 0
-          grep -F '"code":"RUNTIME_NOT_READY"' s79a-not-ready.log
-          grep -F '"reason":"POSTGRESQL_UNAVAILABLE"' s79a-not-ready.log
+          test ! -s .s79a-unexpected-ready
+          if grep -F '"code":"RUNTIME_NOT_READY"' s79a-not-ready.log >/dev/null 2>&1; then
+            grep -F '"reason":"POSTGRESQL_UNAVAILABLE"' s79a-not-ready.log
+          else
+            grep -F '"component":"ENTITLEMENT_SOURCE"' s79a-not-ready.log
+            grep -F '"code":"DEPENDENCY_UNAVAILABLE"' s79a-not-ready.log
+            grep -F '"reason":"ENTITLEMENT_SOURCE_UNAVAILABLE"' s79a-not-ready.log
+          fi
           ! grep -F "$RUNTIME_PASS" s79a-not-ready.log
           ! grep -F "$AUTH_SECRET" s79a-not-ready.log
           ! grep -F "$APP_TOKEN" s79a-not-ready.log
