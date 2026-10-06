@@ -298,6 +298,11 @@ jobs:
             -c "SELECT e.license_id, e.subject, e.product_id, e.features, e.version, e.signing_key_id, e.issued_at, e.not_before, e.expires_at, e.offline_lease_until, e.revocation_epoch, e.revoked_at, e.device_binding_required, b.installation_id AS binding_installation_id, b.device_key_fingerprint AS binding_device_key_fingerprint, b.status AS binding_status FROM licensing_entitlement e LEFT JOIN licensing_device_binding b ON b.subject = e.subject AND b.status = 'ACTIVE' WHERE FALSE" >/dev/null
           echo "S79D_RUNTIME_ENTITLEMENT_READ_PROBE=PASS"
 
+          docker exec -e PGPASSWORD="$PG_ADMIN" liliya-s79d-postgres \
+            psql -v ON_ERROR_STOP=1 -U postgres -d liliya_s79d \
+            -c "INSERT INTO licensing_entitlement(license_id, subject, product_id, features, version, signing_key_id, issued_at, not_before, expires_at, offline_lease_until, revocation_epoch, revoked_at, device_binding_required, device_binding_epoch) VALUES ('s7-9d-license-001', 's7-9d-service-state-subject', 'liliya-pro', ARRAY['model.local']::text[], 1, 's7-9a-logical-key', now(), now() - interval '1 minute', now() + interval '1 hour', now() + interval '30 minutes', 0, NULL, FALSE, 0)"
+          echo "S79D_AUTHORITATIVE_ENTITLEMENT_FIXTURE=READY"
+
       - name: Start real production entrypoint with both exact signing keys
         shell: bash
         run: |
