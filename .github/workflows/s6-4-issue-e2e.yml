@@ -122,7 +122,11 @@ jobs:
             sleep 1
           done
 
-          grep 'LICENSING_S6_4_HOST_READY=' s6-host.log
+          if ! grep 'LICENSING_S6_4_HOST_READY=' s6-host.log; then
+            echo "S6_4_HOST_READY_TIMEOUT"
+            cat s6-host.log
+            exit 1
+          fi
 
       - name: Run frozen LiliyaCore real HTTP ISSUE acceptance
         shell: bash
