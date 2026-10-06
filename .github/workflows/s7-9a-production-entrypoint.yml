@@ -183,7 +183,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CP="issuer-deployment/build/install/issuer-deployment/lib/*"
+          RUNTIME_CP="issuer-deployment/build/install/issuer-deployment/lib/*"
           APP_TOKEN="$(cat .s79a-openbao-token)"
           AUTH_SECRET="$(cat .s79a-auth)"
           TLS_PASS="$(cat .s79a-tls-pass)"
