@@ -84,8 +84,13 @@ class DeviceRebindContractTest {
     fun tampered_code_is_rejected_before_store() {
         val store = FakeStore()
         val code = signedCode()
-        val replacement = if (code.last() == 'A') 'B' else 'A'
-        val tampered = code.dropLast(1) + replacement
+        val envelope = requireNotNull(DeviceRebindCodeCodec.parse(code))
+        val tamperedSignature = envelope.signature.copyOf().also {
+            it[0] = (it[0].toInt() xor 0x01).toByte()
+        }
+        val tampered = DeviceRebindCodeCodec.encode(
+            envelope.copy(signature = tamperedSignature)
+        )
 
         val result = service(store).rebind(
             DeviceRebindRequest(
