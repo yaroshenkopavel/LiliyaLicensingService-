@@ -58,3 +58,28 @@ Operational deployment must preserve all of the following:
 ## Remaining acceptance work
 
 A green repository test suite proves the checked-in code baseline, not full production readiness. Environment-specific rotation, backup/restore drills, certificate lifecycle, recovery procedures, secret renewal, startup/idempotency and end-to-end deployment acceptance remain operational gates and must be verified on the target environment before declaring production readiness.
+
+
+## Canonical PostgreSQL production topology — 2026-10-06
+
+The canonical production database service is:
+
+`postgresql-x64-17-liliya`
+
+on:
+
+`127.0.0.1:5432`
+
+The historical PostgreSQL 16 service is rollback-only and must remain:
+
+- stopped;
+- manual start;
+- retained until the full Windows reboot/autostart recovery gate and an explicit rollback-retirement decision are complete.
+
+The checked-in `scripts/Start-LiliyaLicensingService.ps1` must gate startup on the PostgreSQL 17 service above. A repository checkout must not silently wait for or promote the PostgreSQL 16 rollback service.
+
+The live production helper remains separately deployed under:
+
+`C:\LiliyaServer\bin\startup\Start-LiliyaLicensingService.ps1`
+
+Repository changes do not replace or restart that healthy deployed helper automatically.
