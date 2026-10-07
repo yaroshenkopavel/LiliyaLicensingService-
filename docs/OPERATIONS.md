@@ -108,3 +108,48 @@ This is an expert override. It must not be used for the normal LiliyaCore produc
 The generated CLI output reports the selected offline policy without exposing signing secrets.
 
 This operator policy is distinct from revocation semantics: unlimited offline duration does not prevent a later verified service-state sync from advancing the durable revocation/replay floor.
+
+
+## Licensing startup scheduled-task policy
+
+Canonical owner-laptop task:
+
+`Liliya Licensing Service Startup`
+
+Canonical action:
+
+`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\LiliyaServer\bin\startup\Start-LiliyaLicensingService.ps1"`
+
+Required task policy:
+
+- trigger: owner-user logon;
+- delay: `PT1M`;
+- execution time limit: `PT0S` (unlimited);
+- multiple instances: `IgnoreNew`;
+- restart on failure: 2 attempts at `PT1M`;
+- start when available: enabled;
+- start-on-battery allowed;
+- do not stop merely because the machine switches to battery.
+
+Why `PT0S` is required:
+
+The production helper starts the long-lived Licensing JVM. A finite task execution limit can terminate the scheduled-task process tree after the startup window even though the backend reached readiness. On the 2026-10-07 reboot acceptance attempt, `ExecutionTimeLimit=PT5M` was followed by Task Scheduler result `0x41306` and the reboot path could not be accepted as GREEN.
+
+Use:
+
+`scripts/Set-LiliyaLicensingStartupTaskPolicy.ps1`
+
+without `-Apply` to audit drift. Use `-Apply` only on the owner laptop to back up the existing task XML and normalize the canonical settings.
+
+After changing task lifecycle policy:
+
+1. verify the healthy existing backend is not restarted by an idempotent task run;
+2. require `LastTaskResult=0` for that idempotent validation;
+3. perform a fresh Windows reboot/logon;
+4. verify PG17 Running/Automatic and PG16 Stopped/Manual;
+5. verify OpenBao 8200 and Licensing 8443 listeners;
+6. verify `/health/ready` with the Licensing CA;
+7. verify activation/rebind routes return expected validation responses;
+8. retain reboot evidence before declaring full Windows autostart GREEN.
+
+A manual/idempotent task PASS is not a substitute for the fresh reboot proof.
